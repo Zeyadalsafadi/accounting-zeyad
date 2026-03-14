@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { SUPPORTED_CURRENCIES } from '@paint-shop/shared';
+import { PRODUCT_UNITS, SUPPORTED_CURRENCIES } from '@paint-shop/shared';
 import { Link } from 'react-router-dom';
 import api from '../services/api.js';
 
@@ -19,9 +19,48 @@ const initialForm = {
   notes: ''
 };
 
+const FIELD_HELP = {
+  name: 'استخدم اسماً موجوداً إذا كان المنتج مضافاً سابقاً، أو اكتب اسماً جديداً عند الحاجة.',
+  category: 'اختر التصنيف النشط الذي ينتمي إليه المنتج.',
+  sku: 'أدخل رمزاً فريداً للمنتج لتسهيل البحث والمتابعة.',
+  barcode: 'أدخل الباركود إذا كان متوفراً على العبوة.',
+  unit: 'اختر وحدة البيع أو التخزين المستخدمة لهذا المنتج.',
+  purchasePrice: 'أدخل تكلفة شراء وحدة واحدة من هذا المنتج.',
+  sellingPrice: 'أدخل سعر بيع وحدة واحدة من هذا المنتج.',
+  currency: 'اختر العملة الافتراضية المستخدمة لتسعير المنتج.',
+  currentStock: 'أدخل الكمية المتوفرة حالياً بناءً على الوحدة المختارة.',
+  minStockAlert: 'حدد الحد الأدنى الذي يبدأ عنده تنبيه نقص المخزون.',
+  averageCost: 'أدخل متوسط تكلفة الوحدة إذا كان معروفاً حالياً.',
+  notes: 'أضف أي ملاحظات تشغيلية أو وصف مختصر عند الحاجة.'
+};
+
+function FieldLabel({ label, help }) {
+  return (
+    <label className="field-label">
+      <span>{label}</span>
+      {help ? (
+        <span className="help-icon" title={help} aria-label={help}>
+          ?
+        </span>
+      ) : null}
+    </label>
+  );
+}
+
+function FormField({ label, help, hint, children }) {
+  return (
+    <div className="form-field">
+      <FieldLabel label={label} help={help} />
+      {children}
+      {hint ? <p className="field-hint">{hint}</p> : null}
+    </div>
+  );
+}
+
 export default function ProductsPage() {
   const [categories, setCategories] = useState([]);
   const [list, setList] = useState([]);
+  const [productNames, setProductNames] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [search, setSearch] = useState('');
   const [error, setError] = useState('');
@@ -36,8 +75,14 @@ export default function ProductsPage() {
     setList(res.data.data || []);
   };
 
+  const loadProductNames = async () => {
+    const res = await api.get('/products');
+    const names = [...new Set((res.data.data || []).map((item) => (item.name_ar || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ar'));
+    setProductNames(names);
+  };
+
   useEffect(() => {
-    Promise.all([loadCategories(), loadProducts()]).catch(() => setError('تعذر تحميل البيانات'));
+    Promise.all([loadCategories(), loadProducts(), loadProductNames()]).catch(() => setError('تعذر تحميل البيانات'));
   }, []);
 
   const save = async (e) => {
@@ -47,7 +92,7 @@ export default function ProductsPage() {
       if (form.id) await api.patch(`/products/${form.id}`, form);
       else await api.post('/products', form);
       setForm(initialForm);
-      await loadProducts(search);
+      await Promise.all([loadProducts(search), loadProductNames()]);
     } catch (err) {
       setError(err.response?.data?.error || 'تعذر حفظ المنتج');
     }
@@ -57,6 +102,10 @@ export default function ProductsPage() {
     await api.patch(`/products/${id}/disable`);
     await loadProducts(search);
   };
+
+  const unitOptions = form.unit && !PRODUCT_UNITS.some((unit) => unit.value === form.unit)
+    ? [{ value: form.unit, label: `${form.unit} (حالي)` }, ...PRODUCT_UNITS]
+    : PRODUCT_UNITS;
 
   return (
     <main className="container">
@@ -68,23 +117,52 @@ export default function ProductsPage() {
       <section className="card">
         <h2>{form.id ? 'تعديل منتج' : 'إضافة منتج'}</h2>
         <form className="form-grid" onSubmit={save}>
-          <input placeholder="اسم المنتج" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} required>
-            <option value="">اختر التصنيف</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name_ar}</option>)}
-          </select>
-          <input placeholder="SKU" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
-          <input placeholder="Barcode" value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
-          <input placeholder="الوحدة" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} required />
-          <input placeholder="سعر الشراء" type="number" min="0" step="0.01" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} />
-          <input placeholder="سعر البيع" type="number" min="0" step="0.01" value={form.sellingPrice} onChange={(e) => setForm({ ...form, sellingPrice: e.target.value })} />
-          <select value={form.defaultCurrency} onChange={(e) => setForm({ ...form, defaultCurrency: e.target.value })}>
-            {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <input placeholder="المخزون الحالي" type="number" min="0" step="0.01" value={form.currentStock} onChange={(e) => setForm({ ...form, currentStock: e.target.value })} />
-          <input placeholder="حد التنبيه" type="number" min="0" step="0.01" value={form.minStockAlert} onChange={(e) => setForm({ ...form, minStockAlert: e.target.value })} />
-          <input placeholder="متوسط التكلفة" type="number" min="0" step="0.01" value={form.averageCost} onChange={(e) => setForm({ ...form, averageCost: e.target.value })} />
-          <input placeholder="ملاحظات" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          <FormField label="اسم المنتج" help={FIELD_HELP.name} hint="ابدأ بالكتابة لاختيار اسم سابق أو إدخال اسم جديد.">
+            <input list="product-name-options" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <datalist id="product-name-options">
+              {productNames.map((name) => <option key={name} value={name} />)}
+            </datalist>
+          </FormField>
+          <FormField label="التصنيف" help={FIELD_HELP.category} hint="تظهر هنا التصنيفات النشطة فقط.">
+            <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} required>
+              <option value="">اختر التصنيف</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name_ar}</option>)}
+            </select>
+          </FormField>
+          <FormField label="SKU" help={FIELD_HELP.sku} hint="يجب أن يكون الرمز فريداً لكل منتج.">
+            <input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
+          </FormField>
+          <FormField label="Barcode" help={FIELD_HELP.barcode} hint="اختياري.">
+            <input value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
+          </FormField>
+          <FormField label="الوحدة" help={FIELD_HELP.unit} hint="اختر وحدة موحّدة لتجنب اختلاف التسمية بين المنتجات.">
+            <select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} required>
+              {unitOptions.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
+            </select>
+          </FormField>
+          <FormField label="سعر الشراء" help={FIELD_HELP.purchasePrice} hint="القيمة تخص وحدة واحدة.">
+            <input type="number" min="0" step="0.01" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} />
+          </FormField>
+          <FormField label="سعر البيع" help={FIELD_HELP.sellingPrice} hint="القيمة تخص وحدة واحدة.">
+            <input type="number" min="0" step="0.01" value={form.sellingPrice} onChange={(e) => setForm({ ...form, sellingPrice: e.target.value })} />
+          </FormField>
+          <FormField label="العملة الافتراضية" help={FIELD_HELP.currency} hint="تستخدم في عرض أسعار المنتج بشكل افتراضي.">
+            <select value={form.defaultCurrency} onChange={(e) => setForm({ ...form, defaultCurrency: e.target.value })}>
+              {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </FormField>
+          <FormField label="المخزون الحالي" help={FIELD_HELP.currentStock} hint="يبقى الشرح ظاهراً حتى عند وجود قيمة 0.">
+            <input type="number" min="0" step="0.01" value={form.currentStock} onChange={(e) => setForm({ ...form, currentStock: e.target.value })} />
+          </FormField>
+          <FormField label="حد التنبيه" help={FIELD_HELP.minStockAlert} hint="استخدم 0 إذا لم ترغب بتنبيه مخزون لهذا المنتج.">
+            <input type="number" min="0" step="0.01" value={form.minStockAlert} onChange={(e) => setForm({ ...form, minStockAlert: e.target.value })} />
+          </FormField>
+          <FormField label="متوسط التكلفة" help={FIELD_HELP.averageCost} hint="يمكن تركها 0 إذا لم يتم احتساب المتوسط بعد.">
+            <input type="number" min="0" step="0.01" value={form.averageCost} onChange={(e) => setForm({ ...form, averageCost: e.target.value })} />
+          </FormField>
+          <FormField label="ملاحظات" help={FIELD_HELP.notes} hint="اختياري.">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
           <button className="btn" type="submit">حفظ</button>
         </form>
         {error && <p className="error">{error}</p>}
