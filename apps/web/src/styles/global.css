@@ -70,6 +70,7 @@ select {
   justify-content: center;
 }
 
+.btn.secondary { background: #4b5563; }
 .btn.danger { background: #dc2626; }
 .hint { color: #6b7280; font-size: 0.85rem; }
 .error { color: #b91c1c; }

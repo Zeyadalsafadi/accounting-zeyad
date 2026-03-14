@@ -9,15 +9,28 @@ router.use(authRequired);
 
 router.get('/', (req, res) => {
   const q = (req.query.q || '').toString().trim();
+  const status = (req.query.status || 'all').toString().trim().toLowerCase();
+  if (!['active', 'inactive', 'all'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'قيمة الحالة غير صالحة' });
+  }
+
+  const where = [];
+  const params = [];
+
+  if (status === 'active') where.push('is_active = 1');
+  if (status === 'inactive') where.push('is_active = 0');
+  if (q) {
+    where.push('(name_ar LIKE ? OR COALESCE(name_en,\'\') LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+
   const sql = `
     SELECT id, name_ar, name_en, notes, is_active, created_at, updated_at
     FROM categories
-    ${q ? 'WHERE name_ar LIKE ? OR COALESCE(name_en,\'\') LIKE ?' : ''}
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY id DESC
   `;
-  const rows = q
-    ? db.prepare(sql).all(`%${q}%`, `%${q}%`)
-    : db.prepare(sql).all();
+  const rows = db.prepare(sql).all(...params);
 
   return res.json({ success: true, data: rows });
 });
@@ -62,10 +75,28 @@ router.patch('/:id/disable', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ success: false, error: 'معرف التصنيف غير صالح' });
 
+  const exists = db.prepare('SELECT id FROM categories WHERE id = ?').get(id);
+  if (!exists) return res.status(404).json({ success: false, error: 'التصنيف غير موجود' });
+
   db.prepare('UPDATE categories SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
   writeAuditLog({ userId: req.user.id, entityName: 'categories', entityId: id, action: 'UPDATE', reason: 'DISABLE' });
 
-  return res.json({ success: true });
+  const updated = db.prepare('SELECT id, name_ar, name_en, notes, is_active, created_at, updated_at FROM categories WHERE id = ?').get(id);
+  return res.json({ success: true, data: updated });
+});
+
+router.patch('/:id/reactivate', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'معرف التصنيف غير صالح' });
+
+  const exists = db.prepare('SELECT id FROM categories WHERE id = ?').get(id);
+  if (!exists) return res.status(404).json({ success: false, error: 'التصنيف غير موجود' });
+
+  db.prepare('UPDATE categories SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+  writeAuditLog({ userId: req.user.id, entityName: 'categories', entityId: id, action: 'UPDATE', reason: 'REACTIVATE' });
+
+  const updated = db.prepare('SELECT id, name_ar, name_en, notes, is_active, created_at, updated_at FROM categories WHERE id = ?').get(id);
+  return res.json({ success: true, data: updated });
 });
 
 export default router;

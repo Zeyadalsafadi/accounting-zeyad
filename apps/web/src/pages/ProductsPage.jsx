@@ -27,8 +27,8 @@ export default function ProductsPage() {
   const [error, setError] = useState('');
 
   const loadCategories = async () => {
-    const res = await api.get('/categories');
-    setCategories((res.data.data || []).filter((x) => x.is_active));
+    const res = await api.get('/categories', { params: { status: 'active' } });
+    setCategories(res.data.data || []);
   };
 
   const loadProducts = async (q = '') => {

@@ -3,20 +3,26 @@ import { Link } from 'react-router-dom';
 import api from '../services/api.js';
 
 const initialForm = { id: null, name: '', nameEn: '', notes: '' };
+const STATUS_FILTERS = [
+  { value: 'active', label: 'النشطة' },
+  { value: 'inactive', label: 'المعطلة' },
+  { value: 'all', label: 'الكل' }
+];
 
 export default function CategoriesPage() {
   const [list, setList] = useState([]);
   const [form, setForm] = useState(initialForm);
+  const [statusFilter, setStatusFilter] = useState('active');
   const [error, setError] = useState('');
 
-  const load = async () => {
-    const res = await api.get('/categories');
+  const load = async (status = statusFilter) => {
+    const res = await api.get('/categories', { params: { status } });
     setList(res.data.data || []);
   };
 
   useEffect(() => {
     load().catch(() => setError('تعذر تحميل التصنيفات'));
-  }, []);
+  }, [statusFilter]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -35,8 +41,23 @@ export default function CategoriesPage() {
   };
 
   const disableItem = async (id) => {
-    await api.patch(`/categories/${id}/disable`);
-    await load();
+    setError('');
+    try {
+      await api.patch(`/categories/${id}/disable`);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'تعذر تعطيل التصنيف');
+    }
+  };
+
+  const reactivateItem = async (id) => {
+    setError('');
+    try {
+      await api.patch(`/categories/${id}/reactivate`);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'تعذر إعادة تفعيل التصنيف');
+    }
   };
 
   return (
@@ -58,6 +79,19 @@ export default function CategoriesPage() {
       </section>
 
       <section className="card">
+        <div className="header-actions" style={{ marginBottom: 10 }}>
+          {STATUS_FILTERS.map((filter) => (
+            <button
+              key={filter.value}
+              className={`btn${statusFilter === filter.value ? ' secondary' : ''}`}
+              type="button"
+              onClick={() => setStatusFilter(filter.value)}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+
         <table className="table">
           <thead>
             <tr>
@@ -73,7 +107,11 @@ export default function CategoriesPage() {
                 <td>{item.is_active ? 'نشط' : 'معطل'}</td>
                 <td className="actions">
                   <button className="btn" type="button" onClick={() => setForm({ id: item.id, name: item.name_ar || '', nameEn: item.name_en || '', notes: item.notes || '' })}>تعديل</button>
-                  {item.is_active ? <button className="btn danger" type="button" onClick={() => disableItem(item.id)}>تعطيل</button> : null}
+                  {item.is_active ? (
+                    <button className="btn danger" type="button" onClick={() => disableItem(item.id)}>تعطيل</button>
+                  ) : (
+                    <button className="btn" type="button" onClick={() => reactivateItem(item.id)}>إعادة التفعيل</button>
+                  )}
                 </td>
               </tr>
             ))}
