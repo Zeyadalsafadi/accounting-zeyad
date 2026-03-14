@@ -1,8 +1,9 @@
 import express from 'express';
-import { SUPPORTED_CURRENCIES, USER_ROLES } from '@paint-shop/shared';
+import { PERMISSIONS, SUPPORTED_CURRENCIES } from '@paint-shop/shared';
 import db from '../db.js';
-import { authRequired, requireRoles } from '../middleware/auth.js';
+import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
+import { getRateForCurrency } from '../utils/exchangeRate.js';
 
 const router = express.Router();
 router.use(authRequired);
@@ -15,7 +16,7 @@ function validateCreate(body) {
   if (!body.supplierId) return 'المورد مطلوب';
   if (!body.invoiceDate) return 'تاريخ الفاتورة مطلوب';
   if (!SUPPORTED_CURRENCIES.includes(body.currency)) return 'العملة غير مدعومة';
-  if (toNum(body.exchangeRate) <= 0) return 'سعر الصرف يجب أن يكون أكبر من صفر';
+  if (getRateForCurrency(body.currency) <= 0) return 'سعر الصرف النشط غير صالح';
   if (!Array.isArray(body.items) || body.items.length === 0) return 'يجب إضافة عنصر واحد على الأقل';
   for (const item of body.items) {
     if (!item.productId) return 'معرف المنتج مطلوب';
@@ -72,12 +73,12 @@ router.get('/:id', (req, res) => {
   return res.json({ success: true, data: { ...invoice, items } });
 });
 
-router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.post('/', requirePermission(PERMISSIONS.PURCHASES_CREATE), (req, res) => {
   const payload = {
     supplierId: Number(req.body.supplierId),
     invoiceDate: req.body.invoiceDate,
     currency: req.body.currency,
-    exchangeRate: toNum(req.body.exchangeRate),
+    exchangeRate: getRateForCurrency(req.body.currency),
     items: req.body.items || [],
     discount: toNum(req.body.discount),
     paymentType: req.body.paymentType,
@@ -101,13 +102,13 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
 
   const subtotalOriginal = rows.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const totalOriginal = Math.max(0, subtotalOriginal - payload.discount);
-  if (payload.paidAmount < 0 || payload.paidAmount > totalOriginal) {
+  if (payload.paidAmount < 0) {
     return res.status(400).json({ success: false, error: 'المبلغ المدفوع غير صالح' });
   }
 
-  const remainingOriginal = totalOriginal - payload.paidAmount;
-  if (payload.paymentType === 'CASH' && remainingOriginal > 0) {
-    return res.status(400).json({ success: false, error: 'دفع نقدي يجب أن يغطي كامل المبلغ' });
+  const settlementDelta = totalOriginal - payload.paidAmount;
+  if (payload.paymentType === 'CASH' && payload.paidAmount !== totalOriginal) {
+    return res.status(400).json({ success: false, error: 'الدفع النقدي الكامل يجب أن يساوي إجمالي الفاتورة' });
   }
   if (payload.paymentType === 'CREDIT' && payload.paidAmount > 0) {
     return res.status(400).json({ success: false, error: 'دفع آجل يجب أن يكون بدون دفعة' });
@@ -191,9 +192,9 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
       `).run(payload.cashAccountId, payload.invoiceDate, payload.currency, payload.paidAmount, payload.exchangeRate, paidBase, invoiceId, payload.notes, req.user.id);
     }
 
-    if (remainingOriginal > 0) {
+    if (settlementDelta !== 0) {
       db.prepare('UPDATE suppliers SET current_balance = current_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(remainingOriginal, payload.supplierId);
+        .run(settlementDelta, payload.supplierId);
     }
 
     writeAuditLog({ userId: req.user.id, entityName: 'purchase_invoices', entityId: invoiceId, action: 'CREATE' });
@@ -208,7 +209,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   }
 });
 
-router.post('/:id/cancel', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.post('/:id/cancel', requirePermission(PERMISSIONS.PURCHASES_CANCEL), (req, res) => {
   const id = Number(req.params.id);
   const cancelReason = String(req.body.reason || '').trim();
 
@@ -266,10 +267,10 @@ router.post('/:id/cancel', requireRoles(USER_ROLES.ADMIN), (req, res) => {
       }
     }
 
-    const remaining = toNum(invoice.total_original) - toNum(invoice.paid_original);
-    if (remaining > 0) {
+    const settlementDelta = toNum(invoice.total_original) - toNum(invoice.paid_original);
+    if (settlementDelta !== 0) {
       db.prepare('UPDATE suppliers SET current_balance = current_balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(remaining, invoice.supplier_id);
+        .run(settlementDelta, invoice.supplier_id);
     }
 
     db.prepare(`

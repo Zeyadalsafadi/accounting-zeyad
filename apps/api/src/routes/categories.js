@@ -1,7 +1,7 @@
 import express from 'express';
-import { USER_ROLES } from '@paint-shop/shared';
+import { PERMISSIONS } from '@paint-shop/shared';
 import db from '../db.js';
-import { authRequired, requireRoles } from '../middleware/auth.js';
+import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
 
 const router = express.Router();
@@ -35,7 +35,7 @@ router.get('/', (req, res) => {
   return res.json({ success: true, data: rows });
 });
 
-router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.post('/', requirePermission(PERMISSIONS.INVENTORY_CREATE), (req, res) => {
   const { name, nameEn = null, notes = null } = req.body;
   if (!name || String(name).trim().length < 2) {
     return res.status(400).json({ success: false, error: 'اسم التصنيف مطلوب ويجب ألا يقل عن حرفين' });
@@ -52,7 +52,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   return res.status(201).json({ success: true, data: { id: result.lastInsertRowid } });
 });
 
-router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.patch('/:id', requirePermission(PERMISSIONS.INVENTORY_EDIT), (req, res) => {
   const id = Number(req.params.id);
   const { name, nameEn = null, notes = null } = req.body;
 
@@ -71,7 +71,7 @@ router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   return res.json({ success: true });
 });
 
-router.patch('/:id/disable', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.patch('/:id/disable', requirePermission(PERMISSIONS.INVENTORY_DELETE), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ success: false, error: 'معرف التصنيف غير صالح' });
 
@@ -85,7 +85,7 @@ router.patch('/:id/disable', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   return res.json({ success: true, data: updated });
 });
 
-router.patch('/:id/reactivate', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.patch('/:id/reactivate', requirePermission(PERMISSIONS.INVENTORY_EDIT), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ success: false, error: 'معرف التصنيف غير صالح' });
 

@@ -1,8 +1,9 @@
 import express from 'express';
-import { SUPPORTED_CURRENCIES, USER_ROLES } from '@paint-shop/shared';
+import { PERMISSIONS, SUPPORTED_CURRENCIES } from '@paint-shop/shared';
 import db from '../db.js';
-import { authRequired, requireRoles } from '../middleware/auth.js';
+import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
+import { getRateForCurrency } from '../utils/exchangeRate.js';
 
 const router = express.Router();
 router.use(authRequired);
@@ -16,19 +17,16 @@ function validatePayload(payload) {
   if (!payload.type || payload.type.trim().length < 2) return 'نوع المصروف مطلوب';
   if (toNum(payload.amount) <= 0) return 'قيمة المصروف يجب أن تكون أكبر من صفر';
   if (!SUPPORTED_CURRENCIES.includes(payload.currency)) return 'العملة غير مدعومة';
-  if (toNum(payload.exchangeRate) <= 0) return 'سعر الصرف يجب أن يكون أكبر من صفر';
-  if (!payload.cashAccountId) return 'حساب الصندوق مطلوب';
+  if (getRateForCurrency(payload.currency) <= 0) return 'سعر الصرف النشط غير صالح';
   return null;
 }
 
-function ensureCashAccount(cashAccountId, currency) {
-  const account = db.prepare('SELECT id, currency, is_active FROM cash_accounts WHERE id = ?').get(cashAccountId);
-  if (!account || account.is_active !== 1) {
-    throw new Error('حساب الصندوق غير موجود أو غير نشط');
+function resolveCashAccountByCurrency(currency) {
+  const account = db.prepare('SELECT id, currency, is_active FROM cash_accounts WHERE currency = ? AND is_active = 1 ORDER BY id LIMIT 1').get(currency);
+  if (!account) {
+    throw new Error(`لا يوجد حساب صندوق نشط للعملة ${currency}`);
   }
-  if (account.currency !== currency) {
-    throw new Error('عملة حساب الصندوق لا تطابق عملة المصروف');
-  }
+  return account;
 }
 
 router.get('/', (req, res) => {
@@ -65,23 +63,23 @@ router.get('/', (req, res) => {
   return res.json({ success: true, data: rows });
 });
 
-router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.post('/', requirePermission(PERMISSIONS.EXPENSES_CREATE), (req, res) => {
   const payload = {
     expenseDate: req.body.expenseDate,
     type: String(req.body.type || '').trim(),
     amount: toNum(req.body.amount),
     currency: req.body.currency,
-    exchangeRate: toNum(req.body.exchangeRate),
+    exchangeRate: getRateForCurrency(req.body.currency),
     beneficiary: req.body.beneficiary || null,
-    notes: req.body.notes || null,
-    cashAccountId: Number(req.body.cashAccountId)
+    notes: req.body.notes || null
   };
 
   const validationError = validatePayload(payload);
   if (validationError) return res.status(400).json({ success: false, error: validationError });
 
+  let cashAccount;
   try {
-    ensureCashAccount(payload.cashAccountId, payload.currency);
+    cashAccount = resolveCashAccountByCurrency(payload.currency);
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }
@@ -102,7 +100,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
       payload.amount,
       payload.exchangeRate,
       baseAmount,
-      payload.cashAccountId,
+      cashAccount.id,
       payload.beneficiary,
       payload.notes,
       req.user.id
@@ -117,7 +115,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
         source_type, source_id, notes, created_by_user_id
       ) VALUES (?, ?, 'EXPENSE_PAYMENT', 'OUT', ?, ?, ?, ?, 'EXPENSE', ?, ?, ?)
     `).run(
-      payload.cashAccountId,
+      cashAccount.id,
       payload.expenseDate,
       payload.currency,
       payload.amount,
@@ -140,7 +138,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   }
 });
 
-router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.patch('/:id', requirePermission(PERMISSIONS.EXPENSES_EDIT), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ success: false, error: 'معرف المصروف غير صالح' });
 
@@ -155,17 +153,17 @@ router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
     type: String(req.body.type || '').trim(),
     amount: toNum(req.body.amount),
     currency: req.body.currency,
-    exchangeRate: toNum(req.body.exchangeRate),
+    exchangeRate: getRateForCurrency(req.body.currency),
     beneficiary: req.body.beneficiary || null,
-    notes: req.body.notes || null,
-    cashAccountId: Number(req.body.cashAccountId)
+    notes: req.body.notes || null
   };
 
   const validationError = validatePayload(payload);
   if (validationError) return res.status(400).json({ success: false, error: validationError });
 
+  let cashAccount;
   try {
-    ensureCashAccount(payload.cashAccountId, payload.currency);
+    cashAccount = resolveCashAccountByCurrency(payload.currency);
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }
@@ -211,7 +209,7 @@ router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
       payload.amount,
       payload.exchangeRate,
       newBaseAmount,
-      payload.cashAccountId,
+      cashAccount.id,
       payload.beneficiary,
       payload.notes,
       id
@@ -224,7 +222,7 @@ router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
         source_type, source_id, notes, created_by_user_id
       ) VALUES (?, ?, 'EXPENSE_PAYMENT', 'OUT', ?, ?, ?, ?, 'EXPENSE', ?, ?, ?)
     `).run(
-      payload.cashAccountId,
+      cashAccount.id,
       payload.expenseDate,
       payload.currency,
       payload.amount,

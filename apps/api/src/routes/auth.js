@@ -5,6 +5,7 @@ import db from '../db.js';
 import { env } from '../config/env.js';
 import { writeAuditLog } from '../utils/audit.js';
 import { authRequired } from '../middleware/auth.js';
+import { buildUserSession } from '../utils/accessControl.js';
 
 const router = express.Router();
 
@@ -20,7 +21,19 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ success: false, error: 'بيانات الدخول غير صحيحة' });
   }
 
-  const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, env.jwtSecret, { expiresIn: '12h' });
+  db.prepare(`
+    UPDATE users
+    SET last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(user.id);
+
+  const refreshedUser = db.prepare(`
+    SELECT id, username, full_name, role, access_role, is_active, last_login_at
+    FROM users
+    WHERE id = ?
+  `).get(user.id);
+
+  const token = jwt.sign({ id: user.id }, env.jwtSecret, { expiresIn: '12h' });
 
   writeAuditLog({
     userId: user.id,
@@ -34,12 +47,7 @@ router.post('/login', (req, res) => {
     success: true,
     data: {
       token,
-      user: {
-        id: user.id,
-        username: user.username,
-        fullName: user.full_name,
-        role: user.role
-      }
+      user: buildUserSession(refreshedUser)
     }
   });
 });
@@ -57,12 +65,7 @@ router.get('/me', authRequired, (req, res) => {
 
   return res.json({
     success: true,
-    data: {
-      id: user.id,
-      username: user.username,
-      fullName: user.full_name,
-      role: user.role
-    }
+    data: buildUserSession(user)
   });
 });
 

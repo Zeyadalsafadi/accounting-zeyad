@@ -1,0 +1,29 @@
+{
+  "archiveId": "year-end-2026-03-14T21-24-00-234Z",
+  "archiveFileName": "year-end-2026-03-14T21-24-00-234Z.sqlite",
+  "archiveDbPath": "C:\\Users\\hp\\Desktop\\paint-shop-accounting-system-main\\apps\\api\\data\\archives\\year-end-2026-03-14T21-24-00-234Z.sqlite",
+  "metadataPath": "C:\\Users\\hp\\Desktop\\paint-shop-accounting-system-main\\apps\\api\\data\\archives\\year-end-2026-03-14T21-24-00-234Z.json",
+  "createdAt": "2026-03-14T21:24:00.265Z",
+  "createdByUserId": 1,
+  "createdByUsername": "admin",
+  "mode": "FULL_RESET",
+  "sourceDbPath": "C:\\Users\\hp\\Desktop\\paint-shop-accounting-system-main\\apps\\api\\data\\app.db",
+  "companyName": "متجر الدهانات",
+  "counts": {
+    "categories": 4,
+    "products": 5,
+    "suppliers": 3,
+    "customers": 3,
+    "purchaseInvoices": 3,
+    "purchaseInvoiceItems": 5,
+    "salesInvoices": 4,
+    "salesInvoiceItems": 5,
+    "expenses": 2,
+    "customerCollections": 1,
+    "supplierSettlements": 2,
+    "currencyExchanges": 2,
+    "inventoryMovements": 10,
+    "cashMovements": 18,
+    "cashAccounts": 2
+  }
+}

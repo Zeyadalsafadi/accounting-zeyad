@@ -1,8 +1,9 @@
 import express from 'express';
-import { SUPPORTED_CURRENCIES, USER_ROLES } from '@paint-shop/shared';
+import { PERMISSIONS } from '@paint-shop/shared';
 import db from '../db.js';
-import { authRequired, requireRoles } from '../middleware/auth.js';
+import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
+import { getRateForCurrency } from '../utils/exchangeRate.js';
 
 const router = express.Router();
 router.use(authRequired);
@@ -13,15 +14,15 @@ function toNum(v) {
 
 function validateCreate(body) {
   if (!body.invoiceDate) return 'تاريخ الفاتورة مطلوب';
-  if (!SUPPORTED_CURRENCIES.includes(body.currency)) return 'العملة غير مدعومة';
-  if (toNum(body.exchangeRate) <= 0) return 'سعر الصرف يجب أن يكون أكبر من صفر';
-  if (!Array.isArray(body.items) || body.items.length === 0) return 'يجب إضافة عنصر واحد على الأقل';
+  const paidTotalSyp = toNum(body.paidSyp) + (toNum(body.paidUsd) * toNum(body.exchangeRate));
+  if ((!Array.isArray(body.items) || body.items.length === 0) && paidTotalSyp <= 0) {
+    return 'يجب إضافة عنصر واحد على الأقل أو تسجيل قبض من العميل';
+  }
   for (const item of body.items) {
     if (!item.productId) return 'معرف المنتج مطلوب';
     if (toNum(item.qty) <= 0) return 'الكمية يجب أن تكون أكبر من صفر';
     if (toNum(item.unitPrice) < 0) return 'سعر البيع لا يمكن أن يكون سالباً';
   }
-  if (!['CASH', 'CREDIT', 'PARTIAL'].includes(body.paymentType)) return 'نوع الدفع غير صالح';
   return null;
 }
 
@@ -35,6 +36,7 @@ router.get('/', (req, res) => {
   const sql = `
     SELECT s.id, s.invoice_no, s.invoice_date, s.status, s.currency, s.exchange_rate,
            s.total_original, s.total_base, s.received_original,
+           s.paid_syp, s.paid_usd, s.paid_total_syp,
            (s.total_original - s.received_original) AS remaining_original,
            s.payment_type, c.name AS customer_name
     FROM sales_invoices s
@@ -71,26 +73,36 @@ router.get('/:id', (req, res) => {
   return res.json({ success: true, data: { ...invoice, items } });
 });
 
-router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
+  const activeRate = getRateForCurrency('USD');
   const payload = {
     customerId: req.body.customerId ? Number(req.body.customerId) : null,
     invoiceDate: req.body.invoiceDate,
-    currency: req.body.currency,
-    exchangeRate: toNum(req.body.exchangeRate),
-    items: req.body.items || [],
+    currency: 'SYP',
+    exchangeRate: activeRate,
+    items: (req.body.items || []).filter((item) => Number(item?.productId) && toNum(item?.qty) > 0),
     discount: toNum(req.body.discount),
     paymentType: req.body.paymentType,
-    paidAmount: toNum(req.body.paidAmount),
-    cashAccountId: req.body.cashAccountId ? Number(req.body.cashAccountId) : null,
+    paidSyp: toNum(req.body.paidSyp),
+    paidUsd: toNum(req.body.paidUsd),
     notes: req.body.notes || null
   };
 
   const validationError = validateCreate(payload);
   if (validationError) return res.status(400).json({ success: false, error: validationError });
+  if (payload.paidSyp < 0 || payload.paidUsd < 0) {
+    return res.status(400).json({ success: false, error: 'قيم الدفع لا يمكن أن تكون سالبة' });
+  }
+  if (payload.paidUsd > 0 && activeRate <= 0) {
+    return res.status(400).json({ success: false, error: 'سعر الصرف النشط غير صالح' });
+  }
 
   if (payload.customerId) {
     const customer = db.prepare('SELECT id, is_active FROM customers WHERE id = ?').get(payload.customerId);
     if (!customer || customer.is_active !== 1) return res.status(400).json({ success: false, error: 'العميل غير موجود أو معطل' });
+  }
+  if (payload.items.length === 0 && !payload.customerId) {
+    return res.status(400).json({ success: false, error: 'يجب اختيار عميل عند تسجيل قبض بدون بيع منتجات' });
   }
 
   const rows = payload.items.map((item, index) => ({
@@ -102,33 +114,38 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
 
   const subtotalOriginal = rows.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const totalOriginal = Math.max(0, subtotalOriginal - payload.discount);
-
-  if (payload.paidAmount < 0 || payload.paidAmount > totalOriginal) {
-    return res.status(400).json({ success: false, error: 'المبلغ المدفوع غير صالح' });
+  const paidTotalSyp = payload.paidSyp + (payload.paidUsd * activeRate);
+  const settlementDelta = totalOriginal - paidTotalSyp;
+  if (settlementDelta !== 0 && !payload.customerId) {
+    return res.status(400).json({ success: false, error: 'يجب اختيار عميل عند وجود رصيد غير مسوّى على الفاتورة' });
   }
 
-  const remainingOriginal = totalOriginal - payload.paidAmount;
-  if (payload.paymentType === 'CASH' && remainingOriginal > 0) {
-    return res.status(400).json({ success: false, error: 'دفع نقدي يجب أن يغطي كامل المبلغ' });
-  }
-  if (payload.paymentType === 'CREDIT' && payload.paidAmount > 0) {
-    return res.status(400).json({ success: false, error: 'الدفع الآجل يجب أن يكون بدون دفعة' });
-  }
-  if ((payload.paymentType === 'CASH' || payload.paymentType === 'PARTIAL') && payload.paidAmount > 0 && !payload.cashAccountId) {
-    return res.status(400).json({ success: false, error: 'حساب الصندوق مطلوب عند وجود دفعة' });
-  }
+  const resolvedPaymentType = settlementDelta === 0
+    ? 'CASH'
+    : (paidTotalSyp === 0 ? 'CREDIT' : 'PARTIAL');
 
   const trx = db.transaction(() => {
+    const sypCashAccount = payload.paidSyp > 0
+      ? db.prepare('SELECT id, currency FROM cash_accounts WHERE currency = ? AND is_active = 1 ORDER BY id LIMIT 1').get('SYP')
+      : null;
+    const usdCashAccount = payload.paidUsd > 0
+      ? db.prepare('SELECT id, currency FROM cash_accounts WHERE currency = ? AND is_active = 1 ORDER BY id LIMIT 1').get('USD')
+      : null;
+
+    if (payload.paidSyp > 0 && !sypCashAccount) throw new Error('لا يوجد صندوق نشط بعملة SYP');
+    if (payload.paidUsd > 0 && !usdCashAccount) throw new Error('لا يوجد صندوق نشط بعملة USD');
+
     const invoiceNo = nextInvoiceNo();
-    const totalBase = totalOriginal * payload.exchangeRate;
-    const paidBase = payload.paidAmount * payload.exchangeRate;
+    const totalBase = totalOriginal;
+    const paidBase = paidTotalSyp;
 
     const invResult = db.prepare(`
       INSERT INTO sales_invoices (
         invoice_no, customer_id, invoice_date, currency, exchange_rate,
         subtotal_original, discount_original, total_original, total_base,
-        received_original, received_base, payment_type, cash_account_id, notes, created_by_user_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        received_original, received_base, payment_type, cash_account_id, notes, created_by_user_id,
+        paid_syp, paid_usd, paid_total_syp, syp_cash_account_id, usd_cash_account_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       invoiceNo,
       payload.customerId,
@@ -139,12 +156,17 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
       payload.discount,
       totalOriginal,
       totalBase,
-      payload.paidAmount,
+      paidTotalSyp,
       paidBase,
-      payload.paymentType,
-      payload.cashAccountId,
+      resolvedPaymentType,
+      sypCashAccount?.id || usdCashAccount?.id || null,
       payload.notes,
-      req.user.id
+      req.user.id,
+      payload.paidSyp,
+      payload.paidUsd,
+      paidTotalSyp,
+      sypCashAccount?.id || null,
+      usdCashAccount?.id || null
     );
 
     const invoiceId = invResult.lastInsertRowid;
@@ -158,7 +180,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
 
       const unitCostBase = toNum(product.avg_cost_base);
       const lineOriginal = row.qty * row.unitPrice;
-      const lineBase = lineOriginal * payload.exchangeRate;
+      const lineBase = lineOriginal;
       const lineCogsBase = row.qty * unitCostBase;
       const lineProfitBase = lineBase - lineCogsBase;
 
@@ -205,23 +227,29 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
       );
     }
 
-    if (payload.paidAmount > 0) {
-      const cash = db.prepare('SELECT id, currency FROM cash_accounts WHERE id = ? AND is_active = 1').get(payload.cashAccountId);
-      if (!cash) throw new Error('حساب الصندوق غير موجود');
-      if (cash.currency !== payload.currency) throw new Error('عملة الصندوق لا تطابق عملة الفاتورة');
-
+    if (payload.paidSyp > 0 && sypCashAccount) {
       db.prepare(`
         INSERT INTO cash_movements (
           cash_account_id, movement_date, movement_type, direction,
           currency, original_amount, exchange_rate, base_amount,
           source_type, source_id, notes, created_by_user_id
         ) VALUES (?, ?, 'SALES_RECEIPT', 'IN', ?, ?, ?, ?, 'SALES_INVOICE', ?, ?, ?)
-      `).run(payload.cashAccountId, payload.invoiceDate, payload.currency, payload.paidAmount, payload.exchangeRate, paidBase, invoiceId, payload.notes, req.user.id);
+      `).run(sypCashAccount.id, payload.invoiceDate, 'SYP', payload.paidSyp, 1, payload.paidSyp, invoiceId, payload.notes, req.user.id);
     }
 
-    if (remainingOriginal > 0 && payload.customerId) {
+    if (payload.paidUsd > 0 && usdCashAccount) {
+      db.prepare(`
+        INSERT INTO cash_movements (
+          cash_account_id, movement_date, movement_type, direction,
+          currency, original_amount, exchange_rate, base_amount,
+          source_type, source_id, notes, created_by_user_id
+        ) VALUES (?, ?, 'SALES_RECEIPT', 'IN', ?, ?, ?, ?, 'SALES_INVOICE', ?, ?, ?)
+      `).run(usdCashAccount.id, payload.invoiceDate, 'USD', payload.paidUsd, activeRate, payload.paidUsd * activeRate, invoiceId, payload.notes, req.user.id);
+    }
+
+    if (settlementDelta !== 0 && payload.customerId) {
       db.prepare('UPDATE customers SET current_balance = current_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(remainingOriginal, payload.customerId);
+        .run(settlementDelta, payload.customerId);
     }
 
     writeAuditLog({ userId: req.user.id, entityName: 'sales_invoices', entityId: invoiceId, action: 'CREATE' });
@@ -236,7 +264,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   }
 });
 
-router.post('/:id/cancel', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.post('/:id/cancel', requirePermission(PERMISSIONS.SALES_CANCEL), (req, res) => {
   const id = Number(req.params.id);
   const reason = String(req.body.reason || '').trim();
 
@@ -274,27 +302,28 @@ router.post('/:id/cancel', requireRoles(USER_ROLES.ADMIN), (req, res) => {
     }
 
     if (toNum(invoice.received_original) > 0) {
-      const movement = db.prepare(`
-        SELECT cash_account_id FROM cash_movements
-        WHERE source_type = 'SALES_INVOICE' AND source_id = ?
-        ORDER BY id DESC LIMIT 1
-      `).get(id);
+      const movements = db.prepare(`
+        SELECT cash_account_id, currency, original_amount, exchange_rate, base_amount
+        FROM cash_movements
+        WHERE source_type = 'SALES_INVOICE' AND source_id = ? AND movement_type = 'SALES_RECEIPT'
+        ORDER BY id DESC
+      `).all(id);
 
-      if (movement?.cash_account_id) {
+      for (const movement of movements) {
         db.prepare(`
           INSERT INTO cash_movements (
             cash_account_id, movement_date, movement_type, direction,
             currency, original_amount, exchange_rate, base_amount,
             source_type, source_id, notes, created_by_user_id
           ) VALUES (?, DATE('now'), 'REFUND_OUT', 'OUT', ?, ?, ?, ?, 'SALES_INVOICE', ?, ?, ?)
-        `).run(movement.cash_account_id, invoice.currency, invoice.received_original, invoice.exchange_rate, invoice.received_base, id, `إلغاء فاتورة بيع ${invoice.invoice_no}`, req.user.id);
+        `).run(movement.cash_account_id, movement.currency, movement.original_amount, movement.exchange_rate, movement.base_amount, id, `إلغاء فاتورة بيع ${invoice.invoice_no}`, req.user.id);
       }
     }
 
-    const remaining = toNum(invoice.total_original) - toNum(invoice.received_original);
-    if (remaining > 0 && invoice.customer_id) {
+    const settlementDelta = toNum(invoice.total_original) - toNum(invoice.received_original);
+    if (settlementDelta !== 0 && invoice.customer_id) {
       db.prepare('UPDATE customers SET current_balance = current_balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(remaining, invoice.customer_id);
+        .run(settlementDelta, invoice.customer_id);
     }
 
     db.prepare(`

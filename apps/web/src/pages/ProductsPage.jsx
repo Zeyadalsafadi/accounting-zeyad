@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PRODUCT_UNITS, SUPPORTED_CURRENCIES } from '@paint-shop/shared';
 import { Link } from 'react-router-dom';
 import api from '../services/api.js';
+import { formatCommercialSyp } from '../utils/commercialCurrency.js';
+import { useI18n } from '../i18n/I18nProvider.jsx';
 
 const initialForm = {
   id: null,
@@ -19,51 +21,61 @@ const initialForm = {
   notes: ''
 };
 
-const FIELD_HELP = {
-  name: 'استخدم اسماً موجوداً إذا كان المنتج مضافاً سابقاً، أو اكتب اسماً جديداً عند الحاجة.',
-  category: 'اختر التصنيف النشط الذي ينتمي إليه المنتج.',
-  sku: 'أدخل رمزاً فريداً للمنتج لتسهيل البحث والمتابعة.',
-  barcode: 'أدخل الباركود إذا كان متوفراً على العبوة.',
-  unit: 'اختر وحدة البيع أو التخزين المستخدمة لهذا المنتج.',
-  purchasePrice: 'أدخل تكلفة شراء وحدة واحدة من هذا المنتج.',
-  sellingPrice: 'أدخل سعر بيع وحدة واحدة من هذا المنتج.',
-  currency: 'اختر العملة الافتراضية المستخدمة لتسعير المنتج.',
-  currentStock: 'أدخل الكمية المتوفرة حالياً بناءً على الوحدة المختارة.',
-  minStockAlert: 'حدد الحد الأدنى الذي يبدأ عنده تنبيه نقص المخزون.',
-  averageCost: 'أدخل متوسط تكلفة الوحدة إذا كان معروفاً حالياً.',
-  notes: 'أضف أي ملاحظات تشغيلية أو وصف مختصر عند الحاجة.'
-};
-
 function FieldLabel({ label, help }) {
   return (
     <label className="field-label">
       <span>{label}</span>
       {help ? (
-        <span className="help-icon" title={help} aria-label={help}>
-          ?
-        </span>
+        <span className="help-icon" title={help} aria-label={help}>?</span>
       ) : null}
     </label>
   );
 }
 
-function FormField({ label, help, hint, children }) {
+function FormField({ label, help, children }) {
   return (
     <div className="form-field">
       <FieldLabel label={label} help={help} />
       {children}
-      {hint ? <p className="field-hint">{hint}</p> : null}
     </div>
   );
 }
 
 export default function ProductsPage() {
+  const { t } = useI18n();
   const [categories, setCategories] = useState([]);
   const [list, setList] = useState([]);
   const [productNames, setProductNames] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [search, setSearch] = useState('');
+  const [exchangeRateConfig, setExchangeRateConfig] = useState(null);
   const [error, setError] = useState('');
+
+  const unitLabelMap = useMemo(() => ({
+    قطعة: t('unitPiece'),
+    كيلوغرام: t('unitKilogram'),
+    غرام: t('unitGram'),
+    لتر: t('unitLiter'),
+    متر: t('unitMeter'),
+    صندوق: t('unitBox'),
+    عبوة: t('unitPack'),
+    حبة: t('unitItem')
+  }), [t]);
+
+  const fieldHelp = useMemo(() => ({
+    name: t('helpProductName'),
+    category: t('helpProductCategory'),
+    sku: t('helpProductSku'),
+    barcode: t('helpProductBarcode'),
+    unit: t('helpProductUnit'),
+    purchasePrice: t('helpProductPurchasePrice'),
+    sellingPrice: t('helpProductSellingPrice'),
+    currency: t('helpProductCurrency'),
+    currentStock: t('helpProductCurrentStock'),
+    minStockAlert: t('helpProductMinStock'),
+    averageCost: t('helpProductAverageCost'),
+    notes: t('helpProductNotes')
+  }), [t]);
 
   const loadCategories = async () => {
     const res = await api.get('/categories', { params: { status: 'active' } });
@@ -82,8 +94,13 @@ export default function ProductsPage() {
   };
 
   useEffect(() => {
-    Promise.all([loadCategories(), loadProducts(), loadProductNames()]).catch(() => setError('تعذر تحميل البيانات'));
-  }, []);
+    Promise.all([
+      loadCategories(),
+      loadProducts(),
+      loadProductNames(),
+      api.get('/exchange-rate').then((res) => setExchangeRateConfig(res.data.data || null))
+    ]).catch(() => setError(t('loadingProductsFailed')));
+  }, [t]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -94,7 +111,7 @@ export default function ProductsPage() {
       setForm(initialForm);
       await Promise.all([loadProducts(search), loadProductNames()]);
     } catch (err) {
-      setError(err.response?.data?.error || 'تعذر حفظ المنتج');
+      setError(err.response?.data?.error || t('productSaveFailed'));
     }
   };
 
@@ -104,86 +121,86 @@ export default function ProductsPage() {
   };
 
   const unitOptions = form.unit && !PRODUCT_UNITS.some((unit) => unit.value === form.unit)
-    ? [{ value: form.unit, label: `${form.unit} (حالي)` }, ...PRODUCT_UNITS]
+    ? [{ value: form.unit, label: unitLabelMap[form.unit] || form.unit }, ...PRODUCT_UNITS]
     : PRODUCT_UNITS;
 
   return (
     <main className="container">
       <header className="header-row">
-        <h1>إدارة المنتجات</h1>
-        <Link className="btn" to="/">العودة</Link>
+        <h1>{t('productsTitle')}</h1>
+        <Link className="btn" to="/">{t('back')}</Link>
       </header>
 
       <section className="card">
-        <h2>{form.id ? 'تعديل منتج' : 'إضافة منتج'}</h2>
+        <h2>{form.id ? t('editProduct') : t('addProductTitle')}</h2>
         <form className="form-grid" onSubmit={save}>
-          <FormField label="اسم المنتج" help={FIELD_HELP.name} hint="ابدأ بالكتابة لاختيار اسم سابق أو إدخال اسم جديد.">
+          <FormField label={t('productName')} help={fieldHelp.name}>
             <input list="product-name-options" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
             <datalist id="product-name-options">
               {productNames.map((name) => <option key={name} value={name} />)}
             </datalist>
           </FormField>
-          <FormField label="التصنيف" help={FIELD_HELP.category} hint="تظهر هنا التصنيفات النشطة فقط.">
+          <FormField label={t('categoryField')} help={fieldHelp.category}>
             <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} required>
-              <option value="">اختر التصنيف</option>
+              <option value="">{t('selectCategory')}</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name_ar}</option>)}
             </select>
           </FormField>
-          <FormField label="SKU" help={FIELD_HELP.sku} hint="يجب أن يكون الرمز فريداً لكل منتج.">
+          <FormField label="SKU" help={fieldHelp.sku}>
             <input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
           </FormField>
-          <FormField label="Barcode" help={FIELD_HELP.barcode} hint="اختياري.">
+          <FormField label="Barcode" help={fieldHelp.barcode}>
             <input value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
           </FormField>
-          <FormField label="الوحدة" help={FIELD_HELP.unit} hint="اختر وحدة موحّدة لتجنب اختلاف التسمية بين المنتجات.">
+          <FormField label={t('unit')} help={fieldHelp.unit}>
             <select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} required>
-              {unitOptions.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
+              {unitOptions.map((unit) => <option key={unit.value} value={unit.value}>{unitLabelMap[unit.value] || unit.label}</option>)}
             </select>
           </FormField>
-          <FormField label="سعر الشراء" help={FIELD_HELP.purchasePrice} hint="القيمة تخص وحدة واحدة.">
+          <FormField label={t('purchasePrice')} help={fieldHelp.purchasePrice}>
             <input type="number" min="0" step="0.01" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} />
           </FormField>
-          <FormField label="سعر البيع" help={FIELD_HELP.sellingPrice} hint="القيمة تخص وحدة واحدة.">
+          <FormField label={t('sellingPrice')} help={fieldHelp.sellingPrice}>
             <input type="number" min="0" step="0.01" value={form.sellingPrice} onChange={(e) => setForm({ ...form, sellingPrice: e.target.value })} />
           </FormField>
-          <FormField label="العملة الافتراضية" help={FIELD_HELP.currency} hint="تستخدم في عرض أسعار المنتج بشكل افتراضي.">
+          <FormField label={t('defaultCurrency')} help={fieldHelp.currency}>
             <select value={form.defaultCurrency} onChange={(e) => setForm({ ...form, defaultCurrency: e.target.value })}>
               {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </FormField>
-          <FormField label="المخزون الحالي" help={FIELD_HELP.currentStock} hint="يبقى الشرح ظاهراً حتى عند وجود قيمة 0.">
+          <FormField label={t('currentStock')} help={fieldHelp.currentStock}>
             <input type="number" min="0" step="0.01" value={form.currentStock} onChange={(e) => setForm({ ...form, currentStock: e.target.value })} />
           </FormField>
-          <FormField label="حد التنبيه" help={FIELD_HELP.minStockAlert} hint="استخدم 0 إذا لم ترغب بتنبيه مخزون لهذا المنتج.">
+          <FormField label={t('stockAlertLimit')} help={fieldHelp.minStockAlert}>
             <input type="number" min="0" step="0.01" value={form.minStockAlert} onChange={(e) => setForm({ ...form, minStockAlert: e.target.value })} />
           </FormField>
-          <FormField label="متوسط التكلفة" help={FIELD_HELP.averageCost} hint="يمكن تركها 0 إذا لم يتم احتساب المتوسط بعد.">
+          <FormField label={t('averageCost')} help={fieldHelp.averageCost}>
             <input type="number" min="0" step="0.01" value={form.averageCost} onChange={(e) => setForm({ ...form, averageCost: e.target.value })} />
           </FormField>
-          <FormField label="ملاحظات" help={FIELD_HELP.notes} hint="اختياري.">
+          <FormField label={t('notesField')} help={fieldHelp.notes}>
             <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </FormField>
-          <button className="btn" type="submit">حفظ</button>
+          <button className="btn" type="submit">{t('save')}</button>
         </form>
         {error && <p className="error">{error}</p>}
       </section>
 
       <section className="card">
         <div className="header-actions" style={{ marginBottom: 10 }}>
-          <input placeholder="بحث بالاسم أو SKU أو باركود" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="btn" type="button" onClick={() => loadProducts(search)}>بحث</button>
+          <input placeholder={t('searchByNameSkuBarcode')} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <button className="btn" type="button" onClick={() => loadProducts(search)}>{t('searchAction')}</button>
         </div>
 
         <table className="table">
           <thead>
             <tr>
-              <th>الاسم</th>
-              <th>التصنيف</th>
+              <th>{t('productName')}</th>
+              <th>{t('categoryField')}</th>
               <th>SKU</th>
-              <th>المخزون</th>
-              <th>سعر البيع</th>
-              <th>الحالة</th>
-              <th>إجراءات</th>
+              <th>{t('currentStock')}</th>
+              <th>{t('commercialSellingPriceSyp')}</th>
+              <th>{t('status')}</th>
+              <th>{t('actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -193,8 +210,8 @@ export default function ProductsPage() {
                 <td>{p.category_name}</td>
                 <td>{p.sku}</td>
                 <td>{p.current_qty}</td>
-                <td>{p.selling_price} {p.default_currency}</td>
-                <td>{p.is_active ? 'نشط' : 'معطل'}</td>
+                <td>{formatCommercialSyp(p.selling_price, p.default_currency, exchangeRateConfig?.activeRate)}</td>
+                <td>{p.is_active ? t('active') : t('inactive')}</td>
                 <td className="actions">
                   <button className="btn" type="button" onClick={() => setForm({
                     id: p.id,
@@ -210,8 +227,8 @@ export default function ProductsPage() {
                     minStockAlert: p.min_stock_level,
                     averageCost: p.avg_cost_base,
                     notes: p.notes || ''
-                  })}>تعديل</button>
-                  {p.is_active ? <button className="btn danger" type="button" onClick={() => disableItem(p.id)}>تعطيل</button> : null}
+                  })}>{t('edit')}</button>
+                  {p.is_active ? <button className="btn danger" type="button" onClick={() => disableItem(p.id)}>{t('disable')}</button> : null}
                 </td>
               </tr>
             ))}

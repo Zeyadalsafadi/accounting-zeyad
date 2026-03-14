@@ -22,3 +22,8 @@ export function clearSession() {
   localStorage.removeItem('token');
   localStorage.removeItem('user');
 }
+
+export function hasPermission(user, permissionKey) {
+  if (!permissionKey) return true;
+  return Array.isArray(user?.permissions) && user.permissions.includes(permissionKey);
+}

@@ -1,8 +1,9 @@
 import express from 'express';
-import { SUPPORTED_CURRENCIES, USER_ROLES } from '@paint-shop/shared';
+import { PERMISSIONS, SUPPORTED_CURRENCIES } from '@paint-shop/shared';
 import db from '../db.js';
-import { authRequired, requireRoles } from '../middleware/auth.js';
+import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
+import { getRateForCurrency } from '../utils/exchangeRate.js';
 
 const router = express.Router();
 router.use(authRequired);
@@ -12,6 +13,79 @@ function validatePayload(payload) {
   if (!SUPPORTED_CURRENCIES.includes(payload.currency)) return 'العملة غير مدعومة';
   if (Number(payload.openingBalance) < 0) return 'الرصيد الافتتاحي لا يمكن أن يكون سالباً';
   return null;
+}
+
+function toNum(value) {
+  return Number(value ?? 0);
+}
+
+function resolveCashAccountByCurrency(currency) {
+  const account = db.prepare('SELECT id, name, currency, is_active FROM cash_accounts WHERE currency = ? AND is_active = 1 ORDER BY id LIMIT 1').get(currency);
+  if (!account) throw new Error(`لا يوجد حساب صندوق نشط للعملة ${currency}`);
+  return account;
+}
+
+function getAllowNegativeCash() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'ALLOW_NEGATIVE_CASH'").get();
+  return String(row?.value || 'false').toLowerCase() === 'true';
+}
+
+function getAccountBalance(accountId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN original_amount ELSE -original_amount END), 0) AS balance
+    FROM cash_movements
+    WHERE cash_account_id = ?
+  `).get(accountId);
+  return toNum(row?.balance);
+}
+
+function getSupplierSummary(id) {
+  const supplier = db.prepare(`
+    SELECT id, name, opening_balance, current_balance, currency
+    FROM suppliers
+    WHERE id = ?
+  `).get(id);
+
+  if (!supplier) return null;
+
+  const totals = db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN total_original ELSE 0 END), 0) AS total_purchases,
+      COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN paid_original ELSE 0 END), 0) AS total_payments,
+      COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN (total_original - paid_original) ELSE 0 END), 0) AS outstanding_from_purchases,
+      COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN 1 ELSE 0 END), 0) AS invoice_count,
+      MAX(invoice_date) AS last_transaction_date
+    FROM purchase_invoices
+    WHERE supplier_id = ?
+  `).get(id);
+
+  const currentBalance = Number(supplier.current_balance || 0);
+
+  return {
+    supplier_id: supplier.id,
+    supplier_name: supplier.name,
+    currency: supplier.currency,
+    opening_balance: Number(supplier.opening_balance || 0),
+    current_balance: currentBalance,
+    total_purchases: Number(totals?.total_purchases || 0),
+    total_payments: Number(totals?.total_payments || 0),
+    outstanding_from_purchases: Number(totals?.outstanding_from_purchases || 0),
+    amount_owed_to_supplier: Math.max(currentBalance, 0),
+    amount_receivable_from_supplier: Math.max(currentBalance * -1, 0),
+    invoice_count: Number(totals?.invoice_count || 0),
+    last_transaction_date: totals?.last_transaction_date || null
+  };
+}
+
+function getSupplierSettlements(id) {
+  return db.prepare(`
+    SELECT s.id, s.settlement_date, s.amount, s.currency, s.reference, s.notes, s.balance_after,
+           u.full_name AS created_by_name
+    FROM supplier_settlements s
+    LEFT JOIN users u ON u.id = s.created_by_user_id
+    WHERE s.supplier_id = ?
+    ORDER BY s.id DESC
+  `).all(id);
 }
 
 router.get('/', (req, res) => {
@@ -40,7 +114,132 @@ router.get('/:id', (req, res) => {
   return res.json({ success: true, data: row });
 });
 
-router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.get('/:id/summary', (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'معرف المورد غير صالح' });
+
+  const summary = getSupplierSummary(id);
+  if (!summary) return res.status(404).json({ success: false, error: 'المورد غير موجود' });
+
+  return res.json({ success: true, data: summary });
+});
+
+router.get('/:id/settlements', (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'معرف المورد غير صالح' });
+
+  const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(id);
+  if (!supplier) return res.status(404).json({ success: false, error: 'المورد غير موجود' });
+
+  return res.json({ success: true, data: getSupplierSettlements(id) });
+});
+
+router.post('/:id/settlements', requirePermission(PERMISSIONS.SUPPLIERS_SETTLE), (req, res) => {
+  const supplierId = Number(req.params.id);
+  if (!supplierId) return res.status(400).json({ success: false, error: 'معرف المورد غير صالح' });
+
+  const payload = {
+    date: req.body.date,
+    amount: toNum(req.body.amount),
+    currency: req.body.currency,
+    reference: req.body.reference ? String(req.body.reference).trim() : null,
+    notes: req.body.notes ? String(req.body.notes).trim() : null
+  };
+
+  if (!payload.date) return res.status(400).json({ success: false, error: 'تاريخ السداد مطلوب' });
+  if (!SUPPORTED_CURRENCIES.includes(payload.currency)) return res.status(400).json({ success: false, error: 'العملة غير مدعومة' });
+  if (payload.amount <= 0) return res.status(400).json({ success: false, error: 'قيمة السداد يجب أن تكون أكبر من صفر' });
+
+  const supplier = db.prepare('SELECT id, name, current_balance, currency, is_active FROM suppliers WHERE id = ?').get(supplierId);
+  if (!supplier || supplier.is_active !== 1) {
+    return res.status(400).json({ success: false, error: 'المورد غير موجود أو معطل' });
+  }
+  if (supplier.currency !== payload.currency) {
+    return res.status(400).json({ success: false, error: 'عملة السداد يجب أن تطابق عملة المورد الحالية' });
+  }
+  if (toNum(supplier.current_balance) <= 0) {
+    return res.status(400).json({ success: false, error: 'لا يوجد رصيد مستحق على هذا المورد لتسويته' });
+  }
+  if (payload.amount > toNum(supplier.current_balance)) {
+    return res.status(400).json({ success: false, error: 'قيمة السداد أكبر من الرصيد المستحق للمورد' });
+  }
+
+  let cashAccount;
+  try {
+    cashAccount = resolveCashAccountByCurrency(payload.currency);
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+
+  const currentCashBalance = getAccountBalance(cashAccount.id);
+  if (!getAllowNegativeCash() && currentCashBalance - payload.amount < 0) {
+    return res.status(400).json({ success: false, error: `الرصيد غير كافٍ في صندوق ${cashAccount.name}` });
+  }
+
+  const balanceAfter = toNum(supplier.current_balance) - payload.amount;
+  const exchangeRate = getRateForCurrency(payload.currency);
+
+  const trx = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO supplier_settlements (
+        supplier_id, settlement_date, amount, currency, cash_account_id,
+        reference, notes, balance_after, created_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      supplierId,
+      payload.date,
+      payload.amount,
+      payload.currency,
+      cashAccount.id,
+      payload.reference,
+      payload.notes,
+      balanceAfter,
+      req.user.id
+    );
+
+    const settlementId = Number(result.lastInsertRowid);
+
+    db.prepare('UPDATE suppliers SET current_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(balanceAfter, supplierId);
+
+    db.prepare(`
+      INSERT INTO cash_movements (
+        cash_account_id, movement_date, movement_type, direction,
+        currency, original_amount, exchange_rate, base_amount,
+        source_type, source_id, notes, created_by_user_id
+      ) VALUES (?, ?, 'MANUAL_OUT', 'OUT', ?, ?, ?, ?, 'MANUAL', ?, ?, ?)
+    `).run(
+      cashAccount.id,
+      payload.date,
+      payload.currency,
+      payload.amount,
+      exchangeRate,
+      payload.amount * exchangeRate,
+      settlementId,
+      [supplier.name, payload.reference, payload.notes].filter(Boolean).join(' | ') || `سداد مديونية مورد ${supplier.name}`,
+      req.user.id
+    );
+
+    writeAuditLog({
+      userId: req.user.id,
+      entityName: 'supplier_settlements',
+      entityId: settlementId,
+      action: 'CREATE',
+      reason: 'SUPPLIER_SETTLEMENT'
+    });
+
+    return settlementId;
+  });
+
+  try {
+    const id = trx();
+    return res.status(201).json({ success: true, data: { id, balanceAfter } });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message || 'تعذر تسجيل سداد المورد' });
+  }
+});
+
+router.post('/', requirePermission(PERMISSIONS.SUPPLIERS_CREATE), (req, res) => {
   const payload = {
     name: String(req.body.name || '').trim(),
     phone: req.body.phone || null,
@@ -70,7 +269,7 @@ router.post('/', requireRoles(USER_ROLES.ADMIN), (req, res) => {
   return res.status(201).json({ success: true, data: { id: result.lastInsertRowid } });
 });
 
-router.patch('/:id', requireRoles(USER_ROLES.ADMIN), (req, res) => {
+router.patch('/:id', requirePermission(PERMISSIONS.SUPPLIERS_EDIT), (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ success: false, error: 'معرف المورد غير صالح' });
 

@@ -1,15 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api.js';
+import { useI18n } from '../i18n/I18nProvider.jsx';
 
 const initialForm = { id: null, name: '', nameEn: '', notes: '' };
-const STATUS_FILTERS = [
-  { value: 'active', label: 'النشطة' },
-  { value: 'inactive', label: 'المعطلة' },
-  { value: 'all', label: 'الكل' }
-];
 
 export default function CategoriesPage() {
+  const { t } = useI18n();
+  const statusFilters = useMemo(() => ([
+    { value: 'active', label: t('activeCategories') },
+    { value: 'inactive', label: t('inactiveCategories') },
+    { value: 'all', label: t('allFilter') }
+  ]), [t]);
+
   const [list, setList] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [statusFilter, setStatusFilter] = useState('active');
@@ -21,8 +24,8 @@ export default function CategoriesPage() {
   };
 
   useEffect(() => {
-    load().catch(() => setError('تعذر تحميل التصنيفات'));
-  }, [statusFilter]);
+    load().catch(() => setError(t('loadingCategoriesFailed')));
+  }, [statusFilter, t]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -36,7 +39,7 @@ export default function CategoriesPage() {
       setForm(initialForm);
       await load();
     } catch (err) {
-      setError(err.response?.data?.error || 'تعذر حفظ التصنيف');
+      setError(err.response?.data?.error || t('categorySaveFailed'));
     }
   };
 
@@ -46,7 +49,7 @@ export default function CategoriesPage() {
       await api.patch(`/categories/${id}/disable`);
       await load();
     } catch (err) {
-      setError(err.response?.data?.error || 'تعذر تعطيل التصنيف');
+      setError(err.response?.data?.error || t('categoryDisableFailed'));
     }
   };
 
@@ -56,31 +59,31 @@ export default function CategoriesPage() {
       await api.patch(`/categories/${id}/reactivate`);
       await load();
     } catch (err) {
-      setError(err.response?.data?.error || 'تعذر إعادة تفعيل التصنيف');
+      setError(err.response?.data?.error || t('categoryReactivateFailed'));
     }
   };
 
   return (
     <main className="container">
       <header className="header-row">
-        <h1>إدارة التصنيفات</h1>
-        <Link className="btn" to="/">العودة</Link>
+        <h1>{t('categoriesTitle')}</h1>
+        <Link className="btn" to="/">{t('back')}</Link>
       </header>
 
       <section className="card">
-        <h2>{form.id ? 'تعديل تصنيف' : 'إضافة تصنيف'}</h2>
+        <h2>{form.id ? t('editCategory') : t('addCategoryTitle')}</h2>
         <form className="form-grid" onSubmit={save}>
-          <input placeholder="الاسم بالعربية" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          <input placeholder="الاسم بالإنجليزية (اختياري)" value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} />
-          <input placeholder="ملاحظات" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-          <button className="btn" type="submit">حفظ</button>
+          <input placeholder={t('categoryNameArabic')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <input placeholder={t('categoryNameEnglish')} value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} />
+          <input placeholder={t('notesField')} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          <button className="btn" type="submit">{t('save')}</button>
         </form>
         {error && <p className="error">{error}</p>}
       </section>
 
       <section className="card">
         <div className="header-actions" style={{ marginBottom: 10 }}>
-          {STATUS_FILTERS.map((filter) => (
+          {statusFilters.map((filter) => (
             <button
               key={filter.value}
               className={`btn${statusFilter === filter.value ? ' secondary' : ''}`}
@@ -95,22 +98,22 @@ export default function CategoriesPage() {
         <table className="table">
           <thead>
             <tr>
-              <th>الاسم</th>
-              <th>الحالة</th>
-              <th>إجراءات</th>
+              <th>{t('categoryField')}</th>
+              <th>{t('status')}</th>
+              <th>{t('actions')}</th>
             </tr>
           </thead>
           <tbody>
             {list.map((item) => (
               <tr key={item.id}>
                 <td>{item.name_ar}</td>
-                <td>{item.is_active ? 'نشط' : 'معطل'}</td>
+                <td>{item.is_active ? t('active') : t('inactive')}</td>
                 <td className="actions">
-                  <button className="btn" type="button" onClick={() => setForm({ id: item.id, name: item.name_ar || '', nameEn: item.name_en || '', notes: item.notes || '' })}>تعديل</button>
+                  <button className="btn" type="button" onClick={() => setForm({ id: item.id, name: item.name_ar || '', nameEn: item.name_en || '', notes: item.notes || '' })}>{t('edit')}</button>
                   {item.is_active ? (
-                    <button className="btn danger" type="button" onClick={() => disableItem(item.id)}>تعطيل</button>
+                    <button className="btn danger" type="button" onClick={() => disableItem(item.id)}>{t('disable')}</button>
                   ) : (
-                    <button className="btn" type="button" onClick={() => reactivateItem(item.id)}>إعادة التفعيل</button>
+                    <button className="btn" type="button" onClick={() => reactivateItem(item.id)}>{t('reactivate')}</button>
                   )}
                 </td>
               </tr>

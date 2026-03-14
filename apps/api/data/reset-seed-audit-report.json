@@ -1,0 +1,49 @@
+{
+  "generatedAt": "2026-03-14T21:24:28.699Z",
+  "mode": "reset-only",
+  "databasePath": "C:\\Users\\hp\\Desktop\\paint-shop-accounting-system-main\\apps\\api\\data\\app.db",
+  "counts": {
+    "categories": 0,
+    "products": 0,
+    "suppliers": 0,
+    "customers": 0,
+    "purchaseInvoices": 0,
+    "purchaseInvoiceItems": 0,
+    "salesInvoices": 0,
+    "salesInvoiceItems": 0,
+    "expenses": 0,
+    "customerCollections": 0,
+    "supplierSettlements": 0,
+    "currencyExchanges": 0,
+    "inventoryMovements": 0,
+    "cashMovements": 0
+  },
+  "cashAccounts": [],
+  "settingsKeys": [
+    "ALLOW_NEGATIVE_CASH",
+    "APP_NAME",
+    "BASE_CURRENCY",
+    "COMPANY_LOGO_URL",
+    "COMPANY_NAME",
+    "DATE_FORMAT",
+    "DEFAULT_CURRENCY",
+    "EXCHANGE_RATE_CONFIG",
+    "EXCHANGE_RATE_DEFAULT_MODE",
+    "INVOICE_FOOTER_TEXT",
+    "INVOICE_HEADER_TEXT",
+    "LANGUAGE"
+  ],
+  "users": [
+    {
+      "id": 1,
+      "username": "admin",
+      "is_active": 1
+    },
+    {
+      "id": 2,
+      "username": "cashier",
+      "is_active": 1
+    }
+  ],
+  "isOperationallyEmpty": true
+}
