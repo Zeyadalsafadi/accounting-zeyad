@@ -1,0 +1,19 @@
+{
+  "name": "paint-shop-accounting-system",
+  "private": true,
+  "version": "0.2.0",
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "db:init": "npm run db:init -w apps/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
