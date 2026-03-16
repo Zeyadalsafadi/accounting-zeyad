@@ -5,12 +5,16 @@
   "workspaces": [
     "apps/api",
     "apps/web",
+    "apps/license-manager",
     "packages/shared"
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
     "dev:api": "npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
+    "dev:license-manager": "npm run dev -w apps/license-manager",
+    "build:license-manager-exe": "npm run build:exe -w apps/license-manager",
+    "build": "npm run build -w apps/web && npm run build -w apps/license-manager",
     "db:init": "npm run db:init -w apps/api"
   },
   "devDependencies": {

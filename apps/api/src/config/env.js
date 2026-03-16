@@ -19,5 +19,7 @@ export const env = {
     ? process.env.DB_PATH
     : path.resolve(apiRoot, process.env.DB_PATH || 'data/app.db'),
   baseCurrency,
-  nodeEnv: process.env.NODE_ENV || 'development'
+  nodeEnv: process.env.NODE_ENV || 'development',
+  licensePublicKey: process.env.LICENSE_PUBLIC_KEY || '',
+  licenseEnforcement: process.env.LICENSE_ENFORCEMENT || ((process.env.NODE_ENV || 'development') === 'production' ? 'strict' : 'off')
 };

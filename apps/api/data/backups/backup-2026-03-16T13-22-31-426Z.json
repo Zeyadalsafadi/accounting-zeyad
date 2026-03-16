@@ -1,0 +1,9 @@
+{
+  "backupId": "backup-2026-03-16T13-22-31-426Z",
+  "fileName": "backup-2026-03-16T13-22-31-426Z.sqlite",
+  "createdAt": "2026-03-16T13:22:31.442Z",
+  "sourceDbPath": "C:\\Users\\hp\\Desktop\\paint-shop-accounting-system-main\\apps\\api\\data\\app.db",
+  "createdByUserId": 1,
+  "createdByUsername": "admin",
+  "mode": "MANUAL"
+}

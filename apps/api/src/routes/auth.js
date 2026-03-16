@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { writeAuditLog } from '../utils/audit.js';
 import { authRequired } from '../middleware/auth.js';
 import { buildUserSession } from '../utils/accessControl.js';
+import { getLicenseState } from '../utils/license.js';
 
 const router = express.Router();
 
@@ -47,7 +48,8 @@ router.post('/login', (req, res) => {
     success: true,
     data: {
       token,
-      user: buildUserSession(refreshedUser)
+      user: buildUserSession(refreshedUser),
+      license: getLicenseState()
     }
   });
 });
@@ -65,7 +67,10 @@ router.get('/me', authRequired, (req, res) => {
 
   return res.json({
     success: true,
-    data: buildUserSession(user)
+    data: {
+      user: buildUserSession(user),
+      license: req.license || getLicenseState()
+    }
   });
 });
 

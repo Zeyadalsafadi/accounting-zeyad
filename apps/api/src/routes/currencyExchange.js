@@ -56,6 +56,21 @@ function buildCashMovementNote(payload) {
   return [directionLabel, payload.counterparty, payload.notes].filter(Boolean).join(' | ');
 }
 
+function resolveExchangeAccounts(type) {
+  const outgoingCurrency = type === 'BUY_USD' ? 'SYP' : 'USD';
+  const incomingCurrency = type === 'BUY_USD' ? 'USD' : 'SYP';
+
+  const outgoingAccount = getCashAccountByCurrency(outgoingCurrency);
+  const incomingAccount = getCashAccountByCurrency(incomingCurrency);
+
+  return {
+    outgoingAccount,
+    incomingAccount,
+    sypAccount: outgoingCurrency === 'SYP' ? outgoingAccount : incomingAccount,
+    usdAccount: outgoingCurrency === 'USD' ? outgoingAccount : incomingAccount
+  };
+}
+
 router.get('/', (req, res) => {
   const from = req.query.from ? String(req.query.from) : null;
   const to = req.query.to ? String(req.query.to) : null;
@@ -124,15 +139,14 @@ router.post('/', requirePermission(PERMISSIONS.CURRENCY_EXCHANGE_CREATE), (req, 
 
   let sypAccount;
   let usdAccount;
+  let outgoingAccount;
   try {
-    sypAccount = getCashAccountByCurrency('SYP');
-    usdAccount = getCashAccountByCurrency('USD');
+    ({ sypAccount, usdAccount, outgoingAccount } = resolveExchangeAccounts(payload.type));
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }
 
   const allowNegative = getAllowNegativeCash();
-  const outgoingAccount = payload.type === 'BUY_USD' ? sypAccount : usdAccount;
   const outgoingAmount = payload.type === 'BUY_USD' ? payload.sypAmount : payload.usdAmount;
   const currentBalance = getAccountBalance(outgoingAccount.id);
 

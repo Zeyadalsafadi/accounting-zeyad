@@ -1,0 +1,1020 @@
+{
+  "startedAt": "2026-03-16T13:22:29.414Z",
+  "baseUrl": "http://127.0.0.1:4010/api/v1",
+  "dbPath": "C:\\Users\\hp\\Desktop\\paint-shop-accounting-system-main\\apps\\api\\data\\app.db",
+  "steps": [
+    {
+      "at": "2026-03-16T13:22:29.419Z",
+      "name": "reset-database-files",
+      "status": "passed",
+      "details": {}
+    },
+    {
+      "at": "2026-03-16T13:22:29.877Z",
+      "name": "init-db",
+      "status": "passed",
+      "details": {}
+    },
+    {
+      "at": "2026-03-16T13:22:30.476Z",
+      "name": "start-api-server",
+      "status": "passed",
+      "details": {
+        "port": 4010
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:30.491Z",
+      "name": "system-config",
+      "status": "passed",
+      "details": {
+        "baseCurrency": "SYP"
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:30.749Z",
+      "name": "admin-login",
+      "status": "passed",
+      "details": {
+        "user": "admin"
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:30.795Z",
+      "name": "admin-read-checks",
+      "status": "passed",
+      "details": {
+        "settingsKeys": 8,
+        "roles": 9,
+        "diagnosticsChecks": 5
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:30.828Z",
+      "name": "exchange-rate-modes",
+      "status": "passed",
+      "details": {
+        "autoMode": "AUTO",
+        "activeRateAfterReset": 15000
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:30.874Z",
+      "name": "categories",
+      "status": "passed",
+      "details": {
+        "count": 4
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:30.921Z",
+      "name": "cash-opening-and-manual-movements",
+      "status": "passed",
+      "details": {}
+    },
+    {
+      "at": "2026-03-16T13:22:30.980Z",
+      "name": "customers-and-suppliers",
+      "status": "passed",
+      "details": {
+        "suppliers": 2,
+        "customers": 4
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.159Z",
+      "name": "user-management",
+      "status": "passed",
+      "details": {
+        "usersCount": 3
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.202Z",
+      "name": "products-and-barcode",
+      "status": "passed",
+      "details": {
+        "products": 5,
+        "barcodeMatch": 1
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.241Z",
+      "name": "purchases",
+      "status": "passed",
+      "details": {
+        "purchase1": 1,
+        "purchase2": 2,
+        "purchase3": 3
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.293Z",
+      "name": "sales",
+      "status": "passed",
+      "details": {
+        "sale1": 1,
+        "sale2": 2,
+        "sale3": 3,
+        "sale4": 4,
+        "sale5": 5
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.310Z",
+      "name": "collections-and-settlements",
+      "status": "passed",
+      "details": {}
+    },
+    {
+      "at": "2026-03-16T13:22:31.338Z",
+      "name": "expenses",
+      "status": "passed",
+      "details": {
+        "expense1": 1,
+        "expense2": 2
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.363Z",
+      "name": "currency-exchange",
+      "status": "passed",
+      "details": {
+        "transactions": 2
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.377Z",
+      "name": "daily-closing",
+      "status": "passed",
+      "details": {
+        "closingEntries": 1,
+        "countedAmount": 3915000
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.446Z",
+      "name": "manual-backup",
+      "status": "passed",
+      "details": {
+        "backupFile": "backup-2026-03-16T13-22-31-426Z.sqlite"
+      }
+    },
+    {
+      "at": "2026-03-16T13:22:31.446Z",
+      "name": "reports-and-cross-checks",
+      "status": "passed",
+      "details": {
+        "activeSales": 4,
+        "activePurchases": 2,
+        "lowStockCount": 1
+      }
+    }
+  ],
+  "created": {
+    "categories": {
+      "دهانات داخلية": 1,
+      "أدوات الدهان": 2,
+      "مواد مساعدة": 3,
+      "تصنيف اختبار للتعطيل": 4
+    },
+    "cashAccounts": {
+      "sypAccountId": 1,
+      "usdAccountId": 2
+    },
+    "suppliers": {
+      "مؤسسة الندى التجارية": 1,
+      "Atlas Coatings Import": 2
+    },
+    "customers": {
+      "مكتب الأفق الهندسي": 1,
+      "الدار للمقاولات": 2,
+      "ورشة البيان": 3,
+      "العميل الدولاري": 4
+    },
+    "userId": 3,
+    "products": {
+      "paint": 1,
+      "brush": 2,
+      "imported": 3,
+      "lowStock": 4,
+      "disableTest": 5
+    },
+    "purchases": {
+      "purchase1": 1,
+      "purchase2": 2,
+      "purchase3": 3
+    },
+    "sales": {
+      "sale1": 1,
+      "sale2": 2,
+      "sale3": 3,
+      "sale4": 4,
+      "sale5": 5
+    },
+    "expenses": {
+      "expense1": 1,
+      "expense2": 2
+    }
+  },
+  "summaries": {
+    "customerSummary": {
+      "customer_id": 1,
+      "customer_name": "مكتب الأفق الهندسي",
+      "currency": "SYP",
+      "opening_balance": 120000,
+      "current_balance": 670000,
+      "total_sales": 1800000,
+      "total_collections_from_invoices": 1250000,
+      "standalone_collections": 350000,
+      "outstanding_from_sales": 550000,
+      "amount_receivable_from_customer": 670000,
+      "customer_credit_in_our_favor": 0,
+      "invoice_count": 2,
+      "last_transaction_date": "2026-03-15"
+    },
+    "supplierSypSummary": {
+      "supplier_id": 1,
+      "supplier_name": "مؤسسة الندى التجارية",
+      "currency": "SYP",
+      "opening_balance": 250000,
+      "current_balance": 1450000,
+      "total_purchases": 3000000,
+      "total_payments": 1800000,
+      "standalone_settlements": 300000,
+      "outstanding_from_purchases": 1200000,
+      "amount_owed_to_supplier": 1450000,
+      "amount_receivable_from_supplier": 0,
+      "invoice_count": 1,
+      "last_transaction_date": "2026-03-12"
+    },
+    "supplierUsdSummary": {
+      "supplier_id": 2,
+      "supplier_name": "Atlas Coatings Import",
+      "currency": "USD",
+      "opening_balance": 100,
+      "current_balance": 140,
+      "total_purchases": 130,
+      "total_payments": 90,
+      "standalone_settlements": 20,
+      "outstanding_from_purchases": 40,
+      "amount_owed_to_supplier": 140,
+      "amount_receivable_from_supplier": 0,
+      "invoice_count": 1,
+      "last_transaction_date": "2026-03-12"
+    },
+    "customerAging": {
+      "asOfDate": "2026-03-15",
+      "rows": [
+        {
+          "customer_id": 4,
+          "customer_name": "العميل الدولاري",
+          "currency": "USD",
+          "current_balance": 26,
+          "current": 26,
+          "days31To60": 0,
+          "days61To90": 0,
+          "days90Plus": 0,
+          "totalOutstanding": 26,
+          "unappliedCredits": 0
+        },
+        {
+          "customer_id": 1,
+          "customer_name": "مكتب الأفق الهندسي",
+          "currency": "SYP",
+          "current_balance": 670000,
+          "current": 670000,
+          "days31To60": 0,
+          "days61To90": 0,
+          "days90Plus": 0,
+          "totalOutstanding": 670000,
+          "unappliedCredits": 0
+        }
+      ],
+      "totals": {
+        "current": 670026,
+        "days31To60": 0,
+        "days61To90": 0,
+        "days90Plus": 0,
+        "totalOutstanding": 670026,
+        "unappliedCredits": 0
+      }
+    },
+    "supplierAging": {
+      "asOfDate": "2026-03-15",
+      "rows": [
+        {
+          "supplier_id": 2,
+          "supplier_name": "Atlas Coatings Import",
+          "currency": "USD",
+          "current_balance": 140,
+          "current": 60,
+          "days31To60": 0,
+          "days61To90": 0,
+          "days90Plus": 80,
+          "totalOutstanding": 140,
+          "unappliedCredits": 0
+        },
+        {
+          "supplier_id": 1,
+          "supplier_name": "مؤسسة الندى التجارية",
+          "currency": "SYP",
+          "current_balance": 1450000,
+          "current": 1450000,
+          "days31To60": 0,
+          "days61To90": 0,
+          "days90Plus": 0,
+          "totalOutstanding": 1450000,
+          "unappliedCredits": 0
+        }
+      ],
+      "totals": {
+        "current": 1450060,
+        "days31To60": 0,
+        "days61To90": 0,
+        "days90Plus": 80,
+        "totalOutstanding": 1450140,
+        "unappliedCredits": 0
+      }
+    },
+    "salesInvoices": [
+      {
+        "id": 5,
+        "invoice_no": "SAL-000005",
+        "invoice_date": "2026-03-15",
+        "status": "ACTIVE",
+        "approval_status": "APPROVED",
+        "currency": "USD",
+        "exchange_rate": 15000,
+        "total_original": 36,
+        "total_base": 540000,
+        "received_original": 10,
+        "paid_syp": 0,
+        "paid_usd": 10,
+        "paid_total_syp": 150000,
+        "remaining_original": 26,
+        "payment_type": "PARTIAL",
+        "customer_name": "العميل الدولاري"
+      },
+      {
+        "id": 4,
+        "invoice_no": "SAL-000004",
+        "invoice_date": "2026-03-15",
+        "status": "CANCELLED",
+        "approval_status": "DRAFT",
+        "currency": "SYP",
+        "exchange_rate": 1,
+        "total_original": 230000,
+        "total_base": 230000,
+        "received_original": 230000,
+        "paid_syp": 230000,
+        "paid_usd": 0,
+        "paid_total_syp": 230000,
+        "remaining_original": 0,
+        "payment_type": "CASH",
+        "customer_name": null
+      },
+      {
+        "id": 3,
+        "invoice_no": "SAL-000003",
+        "invoice_date": "2026-03-15",
+        "status": "ACTIVE",
+        "approval_status": "DRAFT",
+        "currency": "SYP",
+        "exchange_rate": 1,
+        "total_original": 0,
+        "total_base": 0,
+        "received_original": 100000,
+        "paid_syp": 100000,
+        "paid_usd": 0,
+        "paid_total_syp": 100000,
+        "remaining_original": -100000,
+        "payment_type": "PARTIAL",
+        "customer_name": "مكتب الأفق الهندسي"
+      },
+      {
+        "id": 2,
+        "invoice_no": "SAL-000002",
+        "invoice_date": "2026-03-14",
+        "status": "ACTIVE",
+        "approval_status": "APPROVED",
+        "currency": "SYP",
+        "exchange_rate": 1,
+        "total_original": 1800000,
+        "total_base": 1800000,
+        "received_original": 800000,
+        "paid_syp": 500000,
+        "paid_usd": 20,
+        "paid_total_syp": 800000,
+        "remaining_original": 1000000,
+        "payment_type": "PARTIAL",
+        "customer_name": "مكتب الأفق الهندسي"
+      },
+      {
+        "id": 1,
+        "invoice_no": "SAL-000001",
+        "invoice_date": "2026-03-13",
+        "status": "ACTIVE",
+        "approval_status": "APPROVED",
+        "currency": "SYP",
+        "exchange_rate": 1,
+        "total_original": 400000,
+        "total_base": 400000,
+        "received_original": 400000,
+        "paid_syp": 400000,
+        "paid_usd": 0,
+        "paid_total_syp": 400000,
+        "remaining_original": 0,
+        "payment_type": "CASH",
+        "customer_name": null
+      }
+    ],
+    "purchaseInvoices": [
+      {
+        "id": 3,
+        "invoice_no": "PUR-000003",
+        "invoice_date": "2026-03-12",
+        "status": "CANCELLED",
+        "approval_status": "DRAFT",
+        "currency": "SYP",
+        "exchange_rate": 1,
+        "total_original": 135000,
+        "total_base": 135000,
+        "paid_original": 135000,
+        "remaining_original": 0,
+        "payment_type": "CASH",
+        "supplier_name": "مؤسسة الندى التجارية"
+      },
+      {
+        "id": 2,
+        "invoice_no": "PUR-000002",
+        "invoice_date": "2026-03-12",
+        "status": "ACTIVE",
+        "approval_status": "APPROVED",
+        "currency": "USD",
+        "exchange_rate": 15000,
+        "total_original": 130,
+        "total_base": 1950000,
+        "paid_original": 70,
+        "remaining_original": 60,
+        "payment_type": "PARTIAL",
+        "supplier_name": "Atlas Coatings Import"
+      },
+      {
+        "id": 1,
+        "invoice_no": "PUR-000001",
+        "invoice_date": "2026-03-11",
+        "status": "ACTIVE",
+        "approval_status": "APPROVED",
+        "currency": "SYP",
+        "exchange_rate": 1,
+        "total_original": 3000000,
+        "total_base": 3000000,
+        "paid_original": 1500000,
+        "remaining_original": 1500000,
+        "payment_type": "PARTIAL",
+        "supplier_name": "مؤسسة الندى التجارية"
+      }
+    ],
+    "profitLoss": {
+      "period": {
+        "from": "2026-03-10",
+        "to": "2026-03-15"
+      },
+      "currency": "SYP",
+      "filters": {
+        "categoryId": null,
+        "unitName": null,
+        "tierCode": null
+      },
+      "summary": {
+        "revenue": 2740000,
+        "cogs": 1698946.5714285716,
+        "grossProfit": 1041053.4285714284,
+        "expenses": 175000,
+        "netProfit": 866053.4285714284,
+        "grossMarginPct": 37.99465067778936,
+        "netMarginPct": 31.607789363920745,
+        "invoiceCount": 3,
+        "customerCount": 2,
+        "averageInvoice": 913333.3333333334,
+        "expenseCount": 1
+      },
+      "comparison": {
+        "previousPeriod": {
+          "from": "2026-03-03",
+          "to": "2026-03-08"
+        },
+        "previousSummary": {
+          "revenue": 0,
+          "cogs": 0,
+          "grossProfit": 0,
+          "expenses": 0,
+          "netProfit": 0,
+          "grossMarginPct": 0,
+          "netMarginPct": 0,
+          "invoiceCount": 0,
+          "customerCount": 0,
+          "averageInvoice": 0,
+          "expenseCount": 0
+        },
+        "deltas": {
+          "revenue": 2740000,
+          "cogs": 1698946.5714285716,
+          "grossProfit": 1041053.4285714284,
+          "expenses": 175000,
+          "netProfit": 866053.4285714284
+        }
+      },
+      "expenseBreakdown": [
+        {
+          "category": "نقل",
+          "entry_count": 1,
+          "amount": 175000
+        }
+      ],
+      "timeline": [
+        {
+          "periodDate": "2026-03-13",
+          "invoiceCount": 1,
+          "customerCount": 0,
+          "revenue": 400000,
+          "cogs": 253333.3333333333,
+          "expenses": 0,
+          "grossProfit": 146666.6666666667,
+          "netProfit": 146666.6666666667
+        },
+        {
+          "periodDate": "2026-03-14",
+          "invoiceCount": 1,
+          "customerCount": 1,
+          "revenue": 1800000,
+          "cogs": 1348095.2380952383,
+          "expenses": 0,
+          "grossProfit": 451904.76190476166,
+          "netProfit": 451904.76190476166
+        },
+        {
+          "periodDate": "2026-03-15",
+          "invoiceCount": 1,
+          "customerCount": 1,
+          "revenue": 540000,
+          "cogs": 97518,
+          "expenses": 175000,
+          "grossProfit": 442482,
+          "netProfit": 267482
+        }
+      ],
+      "productProfitability": [
+        {
+          "productId": 3,
+          "productName": "معجون خارجي مستورد",
+          "categoryName": "مواد مساعدة",
+          "qtySold": 2,
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "invoiceCount": 1,
+          "marginPct": 81.94111111111111
+        },
+        {
+          "productId": 1,
+          "productName": "دهان داخلي اقتصادي",
+          "categoryName": "دهانات داخلية",
+          "qtySold": 15,
+          "revenue": 1605000,
+          "cogs": 1221428.5714285716,
+          "profit": 383571.4285714284,
+          "invoiceCount": 1,
+          "marginPct": 23.89853137516688
+        },
+        {
+          "productId": 2,
+          "productName": "فرشاة احترافية",
+          "categoryName": "أدوات الدهان",
+          "qtySold": 15,
+          "revenue": 595000,
+          "cogs": 380000,
+          "profit": 215000.00000000003,
+          "invoiceCount": 2,
+          "marginPct": 36.13445378151261
+        }
+      ],
+      "customerProfitability": [
+        {
+          "customerId": 1,
+          "customerName": "مكتب الأفق الهندسي",
+          "invoiceCount": 1,
+          "revenue": 1800000,
+          "cogs": 1348095.2380952383,
+          "profit": 451904.7619047618,
+          "marginPct": 25.105820105820097
+        },
+        {
+          "customerId": 4,
+          "customerName": "العميل الدولاري",
+          "invoiceCount": 1,
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "marginPct": 81.94111111111111
+        },
+        {
+          "customerId": null,
+          "customerName": "Cash Customer",
+          "invoiceCount": 1,
+          "revenue": 400000,
+          "cogs": 253333.3333333333,
+          "profit": 146666.6666666667,
+          "marginPct": 36.66666666666667
+        }
+      ],
+      "invoiceProfitability": [
+        {
+          "invoiceId": 2,
+          "invoiceNo": "SAL-000002",
+          "invoiceDate": "2026-03-14",
+          "customerName": "مكتب الأفق الهندسي",
+          "revenue": 1800000,
+          "cogs": 1348095.2380952383,
+          "profit": 451904.7619047618,
+          "linesCount": 2,
+          "marginPct": 25.105820105820097
+        },
+        {
+          "invoiceId": 5,
+          "invoiceNo": "SAL-000005",
+          "invoiceDate": "2026-03-15",
+          "customerName": "العميل الدولاري",
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "linesCount": 1,
+          "marginPct": 81.94111111111111
+        },
+        {
+          "invoiceId": 1,
+          "invoiceNo": "SAL-000001",
+          "invoiceDate": "2026-03-13",
+          "customerName": "Cash Customer",
+          "revenue": 400000,
+          "cogs": 253333.3333333333,
+          "profit": 146666.6666666667,
+          "linesCount": 1,
+          "marginPct": 36.66666666666667
+        }
+      ],
+      "salesByUnit": [
+        {
+          "unitName": "bucket",
+          "linesCount": 1,
+          "qtySold": 15,
+          "revenue": 1605000,
+          "profit": 383571.4285714284
+        },
+        {
+          "unitName": "piece",
+          "linesCount": 2,
+          "qtySold": 15,
+          "revenue": 595000,
+          "profit": 215000.00000000003
+        },
+        {
+          "unitName": "bag",
+          "linesCount": 1,
+          "qtySold": 2,
+          "revenue": 540000,
+          "profit": 442482
+        }
+      ],
+      "salesByPriceTier": [
+        {
+          "tierCode": "SPECIAL",
+          "tierName": "Special - مكتب الأفق الهندسي",
+          "linesCount": 1,
+          "qtySold": 15,
+          "revenue": 1605000,
+          "profit": 383571.4285714284
+        },
+        {
+          "tierCode": "RETAIL",
+          "tierName": "مفرق",
+          "linesCount": 2,
+          "qtySold": 15,
+          "revenue": 595000,
+          "profit": 215000.00000000003
+        },
+        {
+          "tierCode": "UNSPECIFIED",
+          "tierName": "Unspecified",
+          "linesCount": 1,
+          "qtySold": 2,
+          "revenue": 540000,
+          "profit": 442482
+        }
+      ],
+      "topUnits": [
+        {
+          "unitName": "bag",
+          "linesCount": 1,
+          "qtySold": 2,
+          "revenue": 540000,
+          "profit": 442482
+        },
+        {
+          "unitName": "bucket",
+          "linesCount": 1,
+          "qtySold": 15,
+          "revenue": 1605000,
+          "profit": 383571.4285714284
+        },
+        {
+          "unitName": "piece",
+          "linesCount": 2,
+          "qtySold": 15,
+          "revenue": 595000,
+          "profit": 215000.00000000003
+        }
+      ],
+      "bottomUnits": [
+        {
+          "unitName": "piece",
+          "linesCount": 2,
+          "qtySold": 15,
+          "revenue": 595000,
+          "profit": 215000.00000000003
+        },
+        {
+          "unitName": "bucket",
+          "linesCount": 1,
+          "qtySold": 15,
+          "revenue": 1605000,
+          "profit": 383571.4285714284
+        },
+        {
+          "unitName": "bag",
+          "linesCount": 1,
+          "qtySold": 2,
+          "revenue": 540000,
+          "profit": 442482
+        }
+      ],
+      "topPriceTiers": [
+        {
+          "tierCode": "UNSPECIFIED",
+          "tierName": "Unspecified",
+          "linesCount": 1,
+          "qtySold": 2,
+          "revenue": 540000,
+          "profit": 442482
+        },
+        {
+          "tierCode": "SPECIAL",
+          "tierName": "Special - مكتب الأفق الهندسي",
+          "linesCount": 1,
+          "qtySold": 15,
+          "revenue": 1605000,
+          "profit": 383571.4285714284
+        },
+        {
+          "tierCode": "RETAIL",
+          "tierName": "مفرق",
+          "linesCount": 2,
+          "qtySold": 15,
+          "revenue": 595000,
+          "profit": 215000.00000000003
+        }
+      ],
+      "bottomPriceTiers": [
+        {
+          "tierCode": "RETAIL",
+          "tierName": "مفرق",
+          "linesCount": 2,
+          "qtySold": 15,
+          "revenue": 595000,
+          "profit": 215000.00000000003
+        },
+        {
+          "tierCode": "SPECIAL",
+          "tierName": "Special - مكتب الأفق الهندسي",
+          "linesCount": 1,
+          "qtySold": 15,
+          "revenue": 1605000,
+          "profit": 383571.4285714284
+        },
+        {
+          "tierCode": "UNSPECIFIED",
+          "tierName": "Unspecified",
+          "linesCount": 1,
+          "qtySold": 2,
+          "revenue": 540000,
+          "profit": 442482
+        }
+      ],
+      "topProducts": [
+        {
+          "productId": 3,
+          "productName": "معجون خارجي مستورد",
+          "categoryName": "مواد مساعدة",
+          "qtySold": 2,
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "invoiceCount": 1,
+          "marginPct": 81.94111111111111
+        },
+        {
+          "productId": 1,
+          "productName": "دهان داخلي اقتصادي",
+          "categoryName": "دهانات داخلية",
+          "qtySold": 15,
+          "revenue": 1605000,
+          "cogs": 1221428.5714285716,
+          "profit": 383571.4285714284,
+          "invoiceCount": 1,
+          "marginPct": 23.89853137516688
+        },
+        {
+          "productId": 2,
+          "productName": "فرشاة احترافية",
+          "categoryName": "أدوات الدهان",
+          "qtySold": 15,
+          "revenue": 595000,
+          "cogs": 380000,
+          "profit": 215000.00000000003,
+          "invoiceCount": 2,
+          "marginPct": 36.13445378151261
+        }
+      ],
+      "bottomProducts": [
+        {
+          "productId": 2,
+          "productName": "فرشاة احترافية",
+          "categoryName": "أدوات الدهان",
+          "qtySold": 15,
+          "revenue": 595000,
+          "cogs": 380000,
+          "profit": 215000.00000000003,
+          "invoiceCount": 2,
+          "marginPct": 36.13445378151261
+        },
+        {
+          "productId": 1,
+          "productName": "دهان داخلي اقتصادي",
+          "categoryName": "دهانات داخلية",
+          "qtySold": 15,
+          "revenue": 1605000,
+          "cogs": 1221428.5714285716,
+          "profit": 383571.4285714284,
+          "invoiceCount": 1,
+          "marginPct": 23.89853137516688
+        },
+        {
+          "productId": 3,
+          "productName": "معجون خارجي مستورد",
+          "categoryName": "مواد مساعدة",
+          "qtySold": 2,
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "invoiceCount": 1,
+          "marginPct": 81.94111111111111
+        }
+      ],
+      "topCustomers": [
+        {
+          "customerId": 1,
+          "customerName": "مكتب الأفق الهندسي",
+          "invoiceCount": 1,
+          "revenue": 1800000,
+          "cogs": 1348095.2380952383,
+          "profit": 451904.7619047618,
+          "marginPct": 25.105820105820097
+        },
+        {
+          "customerId": 4,
+          "customerName": "العميل الدولاري",
+          "invoiceCount": 1,
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "marginPct": 81.94111111111111
+        },
+        {
+          "customerId": null,
+          "customerName": "Cash Customer",
+          "invoiceCount": 1,
+          "revenue": 400000,
+          "cogs": 253333.3333333333,
+          "profit": 146666.6666666667,
+          "marginPct": 36.66666666666667
+        }
+      ],
+      "bottomCustomers": [
+        {
+          "customerId": null,
+          "customerName": "Cash Customer",
+          "invoiceCount": 1,
+          "revenue": 400000,
+          "cogs": 253333.3333333333,
+          "profit": 146666.6666666667,
+          "marginPct": 36.66666666666667
+        },
+        {
+          "customerId": 4,
+          "customerName": "العميل الدولاري",
+          "invoiceCount": 1,
+          "revenue": 540000,
+          "cogs": 97518,
+          "profit": 442482,
+          "marginPct": 81.94111111111111
+        },
+        {
+          "customerId": 1,
+          "customerName": "مكتب الأفق الهندسي",
+          "invoiceCount": 1,
+          "revenue": 1800000,
+          "cogs": 1348095.2380952383,
+          "profit": 451904.7619047618,
+          "marginPct": 25.105820105820097
+        }
+      ]
+    },
+    "lowStockRows": [
+      {
+        "id": 4,
+        "name_ar": "سيليكون مانع",
+        "current_qty": 4,
+        "min_stock_level": 5,
+        "is_active": 1,
+        "default_currency": "SYP",
+        "barcode": "869111000030"
+      }
+    ],
+    "cashBalances": [
+      {
+        "id": 1,
+        "name": "صندوق الليرة السورية",
+        "currency": "SYP",
+        "balance": 4105000
+      },
+      {
+        "id": 2,
+        "name": "صندوق الدولار",
+        "currency": "USD",
+        "balance": 1930
+      }
+    ],
+    "products": [
+      {
+        "id": 1,
+        "name_ar": "دهان داخلي اقتصادي",
+        "current_qty": 55,
+        "min_stock_level": 10,
+        "is_active": 1,
+        "default_currency": "SYP",
+        "barcode": "869111000001"
+      },
+      {
+        "id": 2,
+        "name_ar": "فرشاة احترافية",
+        "current_qty": 135,
+        "min_stock_level": 20,
+        "is_active": 1,
+        "default_currency": "SYP",
+        "barcode": "869111000010"
+      },
+      {
+        "id": 3,
+        "name_ar": "معجون خارجي مستورد",
+        "current_qty": 38,
+        "min_stock_level": 8,
+        "is_active": 1,
+        "default_currency": "USD",
+        "barcode": "869111000020"
+      },
+      {
+        "id": 4,
+        "name_ar": "سيليكون مانع",
+        "current_qty": 4,
+        "min_stock_level": 5,
+        "is_active": 1,
+        "default_currency": "SYP",
+        "barcode": "869111000030"
+      },
+      {
+        "id": 5,
+        "name_ar": "منتج اختبار للتعطيل",
+        "current_qty": 8,
+        "min_stock_level": 2,
+        "is_active": 0,
+        "default_currency": "SYP",
+        "barcode": "869111000040"
+      }
+    ]
+  },
+  "findings": [],
+  "failures": [],
+  "completedAt": "2026-03-16T13:22:31.446Z",
+  "status": "passed"
+}

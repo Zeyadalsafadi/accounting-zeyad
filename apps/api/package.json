@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "db:init": "node src/initDb.js"
+    "db:init": "node src/initDb.js",
+    "license:keypair": "node scripts/generate-license-keypair.mjs",
+    "license:issue": "node scripts/issue-license.mjs"
   },
   "dependencies": {
     "@paint-shop/shared": "0.1.0",

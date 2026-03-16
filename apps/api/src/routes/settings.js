@@ -13,6 +13,14 @@ import {
   GENERAL_SETTINGS_DEFINITIONS,
   getGeneralSettingsMap
 } from '../utils/accessControl.js';
+import { runAccountingDiagnostics } from '../utils/diagnostics.js';
+import {
+  createManualBackup,
+  exportDataset,
+  getDataManagementOverview,
+  importDataset,
+  updateBackupSettings
+} from '../utils/dataManagement.js';
 import {
   archiveCurrentOperationalState,
   carryForwardOpeningBalances,
@@ -27,12 +35,92 @@ import {
   YEAR_END_MODE_CARRY_FORWARD,
   YEAR_END_MODE_FULL_RESET
 } from '../utils/yearEnd.js';
+import {
+  activateLicense,
+  getLicenseState,
+  removeRegisteredLicenseDevice,
+  removeStoredLicense
+} from '../utils/license.js';
 
 const router = express.Router();
 const YEAR_END_ALLOWED_ROLES = [USER_ROLES.SUPER_ADMIN, USER_ROLES.OWNER, USER_ROLES.ADMIN];
 
 router.use(authRequired);
 router.use(requirePermission(PERMISSIONS.SETTINGS_VIEW));
+
+router.get('/license', (_req, res) => {
+  return res.json({
+    success: true,
+    data: getLicenseState()
+  });
+});
+
+router.post('/license', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  const licenseKey = String(req.body.licenseKey || '').trim();
+  if (!licenseKey) {
+    return res.status(400).json({ success: false, error: 'مفتاح الترخيص مطلوب' });
+  }
+
+  try {
+    const beforeState = getLicenseState();
+    const afterState = activateLicense({ licenseKey, userId: req.user.id });
+    writeAuditLog({
+      userId: req.user.id,
+      entityName: 'license',
+      action: 'ACTIVATE',
+      metadata: {
+        beforeStatus: beforeState.status,
+        afterStatus: afterState.status,
+        licenseId: afterState.payload?.licenseId || null,
+        planCode: afterState.payload?.planCode || null
+      }
+    });
+
+    return res.status(201).json({ success: true, data: afterState });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message || 'تعذر تفعيل مفتاح الترخيص' });
+  }
+});
+
+router.delete('/license', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  const beforeState = getLicenseState();
+  const afterState = removeStoredLicense(req.user.id);
+
+  writeAuditLog({
+    userId: req.user.id,
+    entityName: 'license',
+    action: 'CLEAR',
+    metadata: {
+      beforeStatus: beforeState.status,
+      beforeLicenseId: beforeState.payload?.licenseId || null
+    }
+  });
+
+  return res.json({ success: true, data: afterState });
+});
+
+router.delete('/license/devices/:deviceId', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  const deviceId = String(req.params.deviceId || '').trim();
+  if (!deviceId) {
+    return res.status(400).json({ success: false, error: 'معرف الجهاز مطلوب' });
+  }
+
+  const beforeState = getLicenseState();
+  const afterState = removeRegisteredLicenseDevice({ deviceId, userId: req.user.id });
+
+  writeAuditLog({
+    userId: req.user.id,
+    entityName: 'license',
+    action: 'REMOVE_DEVICE',
+    reason: deviceId,
+    metadata: {
+      licenseId: beforeState.payload?.licenseId || null,
+      remainingDevices: afterState.registeredDevices?.length || 0
+    }
+  });
+
+  return res.json({ success: true, data: afterState });
+});
 
 router.get('/general', (_req, res) => {
   return res.json({
@@ -49,6 +137,7 @@ router.patch('/general', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, r
   const validKeys = new Map(GENERAL_SETTINGS_DEFINITIONS.map((item) => [item.key, item]));
 
   const trx = db.transaction(() => {
+    const beforeValues = getGeneralSettingsMap();
     const stmt = db.prepare(`
       INSERT INTO settings (key, value, value_type, updated_by_user_id, updated_at)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -64,16 +153,17 @@ router.patch('/general', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, r
       if (!definition) continue;
       stmt.run(key, String(value ?? ''), definition.valueType, req.user.id);
     }
+
+    const afterValues = getGeneralSettingsMap();
+    writeAuditLog({
+      userId: req.user.id,
+      entityName: 'settings',
+      action: 'UPDATE',
+      metadata: { before: beforeValues, after: afterValues, keys: Object.keys(updates) }
+    });
   });
 
   trx();
-
-  writeAuditLog({
-    userId: req.user.id,
-    entityName: 'settings',
-    action: 'UPDATE',
-    metadata: { keys: Object.keys(updates) }
-  });
 
   return res.json({ success: true, data: getGeneralSettingsMap() });
 });
@@ -152,16 +242,121 @@ router.patch('/roles/:roleKey', requirePermission(PERMISSIONS.SETTINGS_MANAGE), 
 });
 
 router.get('/audit', requirePermission(PERMISSIONS.SETTINGS_VIEW), (_req, res) => {
-  const logs = db.prepare(`
+  const q = String(_req.query.q || '').trim();
+  const entity = String(_req.query.entity || '').trim();
+  const action = String(_req.query.action || '').trim();
+  const requestedLimit = Number(_req.query.limit || 100);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 300) : 100;
+
+  let sql = `
     SELECT a.id, a.event_time, a.entity_name, a.entity_id, a.action, a.reason, a.metadata_json,
            u.full_name AS user_name
     FROM audit_logs a
     LEFT JOIN users u ON u.id = a.user_id
-    ORDER BY a.id DESC
-    LIMIT 100
-  `).all();
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (q) {
+    sql += ' AND (COALESCE(a.reason, \'\') LIKE ? OR COALESCE(a.entity_name, \'\') LIKE ? OR COALESCE(u.full_name, \'\') LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (entity) {
+    sql += ' AND a.entity_name = ?';
+    params.push(entity);
+  }
+  if (action) {
+    sql += ' AND a.action = ?';
+    params.push(action);
+  }
+
+  sql += ' ORDER BY a.id DESC LIMIT ?';
+  params.push(limit);
+
+  const logs = db.prepare(sql).all(...params);
 
   return res.json({ success: true, data: logs });
+});
+
+router.get('/diagnostics', requirePermission(PERMISSIONS.SETTINGS_VIEW), (_req, res) => {
+  return res.json({ success: true, data: runAccountingDiagnostics() });
+});
+
+router.get('/diagnostics/export', requirePermission(PERMISSIONS.SETTINGS_VIEW), (_req, res) => {
+  return res.json({ success: true, data: runAccountingDiagnostics() });
+});
+
+router.get('/data-management', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (_req, res) => {
+  return res.json({ success: true, data: getDataManagementOverview() });
+});
+
+router.post('/data-management/backup', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  try {
+    const backup = createManualBackup({ userId: req.user.id, username: req.user.username });
+    writeAuditLog({
+      userId: req.user.id,
+      entityName: 'data_management',
+      action: 'BACKUP',
+      metadata: backup
+    });
+    return res.status(201).json({ success: true, data: backup });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message || 'تعذر إنشاء النسخة الاحتياطية' });
+  }
+});
+
+router.patch('/data-management/backup-settings', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  try {
+    const settings = updateBackupSettings({
+      autoBackupEnabled: !!req.body.autoBackupEnabled,
+      intervalDays: req.body.intervalDays,
+      retentionCount: req.body.retentionCount,
+      userId: req.user.id
+    });
+    writeAuditLog({
+      userId: req.user.id,
+      entityName: 'data_management',
+      action: 'UPDATE_BACKUP_SETTINGS',
+      metadata: settings
+    });
+    return res.json({ success: true, data: settings });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message || 'تعذر تحديث إعدادات النسخ الاحتياطي' });
+  }
+});
+
+router.get('/data-management/export/:dataset', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  try {
+    const dataset = String(req.params.dataset || '');
+    return res.json({
+      success: true,
+      data: {
+        dataset,
+        exportedAt: new Date().toISOString(),
+        ...exportDataset(dataset)
+      }
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message || 'تعذر تصدير البيانات' });
+  }
+});
+
+router.post('/data-management/import/:dataset', requirePermission(PERMISSIONS.SETTINGS_MANAGE), (req, res) => {
+  try {
+    const dataset = String(req.params.dataset || '');
+    const rows = req.body.rows || [];
+    const importedCount = importDataset(dataset, rows);
+    writeAuditLog({
+      userId: req.user.id,
+      entityName: 'data_management',
+      action: 'IMPORT',
+      reason: dataset,
+      metadata: { dataset, importedCount }
+    });
+    return res.json({ success: true, data: { dataset, importedCount } });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message || 'تعذر استيراد البيانات' });
+  }
 });
 
 router.get('/year-end', requirePermission(PERMISSIONS.SETTINGS_YEAR_END), (req, res) => {

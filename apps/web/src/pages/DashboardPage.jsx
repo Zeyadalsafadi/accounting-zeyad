@@ -7,6 +7,8 @@ export default function DashboardPage() {
   const { t } = useI18n();
   const [summary, setSummary] = useState(null);
   const [exchangeRateConfig, setExchangeRateConfig] = useState(null);
+  const totals = summary?.totals || {};
+  const lowStockCount = summary?.lowStockCount ?? summary?.lowStock?.length ?? 0;
 
   useEffect(() => {
     Promise.all([
@@ -24,10 +26,10 @@ export default function DashboardPage() {
       <p>{t('dashboardSubtitle')}</p>
 
       <div className="stats-grid">
-        <Stat title={t('todaySales')} value={formatCommercialSyp(summary?.sales ?? 0, 'SYP', exchangeRateConfig?.activeRate)} />
-        <Stat title={t('todayPurchases')} value={summary?.purchases ?? 0} />
-        <Stat title={t('todayExpenses')} value={summary?.expenses ?? 0} />
-        <Stat title={t('lowStockProducts')} value={summary?.lowStock ?? 0} />
+        <Stat title={t('todaySales')} value={formatCommercialSyp(totals.salesBase ?? 0, 'SYP', exchangeRateConfig?.activeRate)} />
+        <Stat title={t('todayPurchases')} value={totals.purchasesBase ?? 0} />
+        <Stat title={t('todayExpenses')} value={totals.expensesBase ?? 0} />
+        <Stat title={t('lowStockProducts')} value={lowStockCount} />
       </div>
     </section>
   );

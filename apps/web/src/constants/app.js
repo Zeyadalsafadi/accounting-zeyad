@@ -66,6 +66,11 @@ export const WORKSPACE_ROUTE_META = {
     groupKey: 'menuReports',
     descriptionKey: 'workspace.reports'
   },
+  '/help': {
+    labelKey: 'helpCenterTitle',
+    groupKey: 'menuInfo',
+    descriptionKey: 'workspace.help'
+  },
   '/cash-management': {
     labelKey: 'cashbox',
     groupKey: 'menuFinancial',
@@ -146,6 +151,7 @@ export const MENU_SECTIONS = [
     key: 'administration',
     labelKey: 'menuAdministration',
     items: [
+      { labelKey: 'dashboard', to: '/' },
       { labelKey: 'settingsAdmin', to: '/settings', permission: PERMISSIONS.SETTINGS_VIEW }
     ]
   },
@@ -153,6 +159,7 @@ export const MENU_SECTIONS = [
     key: 'information',
     labelKey: 'menuInfo',
     items: [
+      { labelKey: 'helpCenterTitle', to: '/help' },
       { labelKey: 'addressBook', placeholder: true },
       { labelKey: 'reminders', placeholder: true },
       { labelKey: 'appointments', placeholder: true },
@@ -173,6 +180,7 @@ export const SHELL_ICON_ACTIONS = [
   { labelKey: 'iconProducts', to: '/products', icon: 'product', permission: PERMISSIONS.INVENTORY_VIEW },
   { labelKey: 'iconCustomers', to: '/customers', icon: 'customers', permission: PERMISSIONS.CUSTOMERS_VIEW },
   { labelKey: 'iconSuppliers', to: '/suppliers', icon: 'suppliers', permission: PERMISSIONS.SUPPLIERS_VIEW },
+  { labelKey: 'iconCashbox', to: '/cash-management', icon: 'cashbox', permission: PERMISSIONS.SETTINGS_MANAGE },
   { labelKey: 'iconExpenses', to: '/expenses', icon: 'expenses', permission: PERMISSIONS.EXPENSES_VIEW },
   { labelKey: 'iconExchangeRate', to: '/exchange-rate', icon: 'exchange', permission: PERMISSIONS.EXCHANGE_RATE_VIEW }
 ];

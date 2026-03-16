@@ -19,6 +19,7 @@ import cashManagementRouter from './routes/cashManagement.js';
 import expensesRouter from './routes/expenses.js';
 import exchangeRateRouter from './routes/exchangeRate.js';
 import currencyExchangeRouter from './routes/currencyExchange.js';
+import { maybeRunScheduledBackup } from './utils/dataManagement.js';
 
 const app = express();
 
@@ -47,6 +48,12 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ success: false, error: 'حدث خطأ داخلي' });
 });
+
+try {
+  maybeRunScheduledBackup();
+} catch (error) {
+  console.error('Automatic backup check failed:', error);
+}
 
 app.listen(env.port, () => {
   console.log(`API running on http://localhost:${env.port}`);

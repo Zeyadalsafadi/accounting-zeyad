@@ -4,6 +4,7 @@ import db from '../db.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
 import { getRateForCurrency } from '../utils/exchangeRate.js';
+import { computeAgingFromEntries } from '../utils/aging.js';
 
 const router = express.Router();
 router.use(authRequired);
@@ -52,14 +53,20 @@ function getSupplierSummary(id) {
     SELECT
       COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN total_original ELSE 0 END), 0) AS total_purchases,
       COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN paid_original ELSE 0 END), 0) AS total_payments,
-      COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN (total_original - paid_original) ELSE 0 END), 0) AS outstanding_from_purchases,
       COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN 1 ELSE 0 END), 0) AS invoice_count,
       MAX(invoice_date) AS last_transaction_date
     FROM purchase_invoices
     WHERE supplier_id = ?
   `).get(id);
 
+  const standaloneSettlements = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM supplier_settlements
+    WHERE supplier_id = ?
+  `).get(id);
+
   const currentBalance = Number(supplier.current_balance || 0);
+  const totalPayments = Number(totals?.total_payments || 0) + Number(standaloneSettlements?.total || 0);
 
   return {
     supplier_id: supplier.id,
@@ -68,8 +75,9 @@ function getSupplierSummary(id) {
     opening_balance: Number(supplier.opening_balance || 0),
     current_balance: currentBalance,
     total_purchases: Number(totals?.total_purchases || 0),
-    total_payments: Number(totals?.total_payments || 0),
-    outstanding_from_purchases: Number(totals?.outstanding_from_purchases || 0),
+    total_payments: totalPayments,
+    standalone_settlements: Number(standaloneSettlements?.total || 0),
+    outstanding_from_purchases: Number(totals?.total_purchases || 0) - totalPayments,
     amount_owed_to_supplier: Math.max(currentBalance, 0),
     amount_receivable_from_supplier: Math.max(currentBalance * -1, 0),
     invoice_count: Number(totals?.invoice_count || 0),
@@ -86,6 +94,107 @@ function getSupplierSettlements(id) {
     WHERE s.supplier_id = ?
     ORDER BY s.id DESC
   `).all(id);
+}
+
+function getSuppliersAging(asOfDate) {
+  const suppliers = db.prepare(`
+    SELECT id, name, current_balance, opening_balance, currency, created_at, is_active
+    FROM suppliers
+    WHERE is_active = 1
+    ORDER BY name
+  `).all();
+
+  const purchases = db.prepare(`
+    SELECT supplier_id, invoice_date, (total_original - paid_original) AS remaining_original
+    FROM purchase_invoices
+    WHERE status != 'CANCELLED'
+      AND COALESCE(total_original - paid_original, 0) > 0
+  `).all();
+
+  const settlements = db.prepare(`
+    SELECT supplier_id, settlement_date, amount
+    FROM supplier_settlements
+    WHERE COALESCE(amount, 0) > 0
+  `).all();
+
+  const invoiceCredits = db.prepare(`
+    SELECT supplier_id, invoice_date, ABS(total_original - paid_original) AS credit_amount
+    FROM purchase_invoices
+    WHERE status != 'CANCELLED'
+      AND COALESCE(total_original - paid_original, 0) < 0
+  `).all();
+
+  const purchaseMap = new Map();
+  const settlementMap = new Map();
+
+  for (const row of purchases) {
+    if (!purchaseMap.has(row.supplier_id)) purchaseMap.set(row.supplier_id, []);
+    purchaseMap.get(row.supplier_id).push({
+      type: 'INVOICE',
+      date: row.invoice_date,
+      amount: toNum(row.remaining_original)
+    });
+  }
+
+  for (const row of settlements) {
+    if (!settlementMap.has(row.supplier_id)) settlementMap.set(row.supplier_id, []);
+    settlementMap.get(row.supplier_id).push({
+      date: row.settlement_date,
+      amount: toNum(row.amount)
+    });
+  }
+
+  for (const row of invoiceCredits) {
+    if (!settlementMap.has(row.supplier_id)) settlementMap.set(row.supplier_id, []);
+    settlementMap.get(row.supplier_id).push({
+      date: row.invoice_date,
+      amount: toNum(row.credit_amount)
+    });
+  }
+
+  const rows = suppliers.map((supplier) => {
+    const entries = [];
+    if (toNum(supplier.opening_balance) > 0) {
+      entries.push({
+        type: 'OPENING',
+        date: String(supplier.created_at || asOfDate).slice(0, 10),
+        amount: toNum(supplier.opening_balance)
+      });
+    }
+    entries.push(...(purchaseMap.get(supplier.id) || []));
+
+    const aging = computeAgingFromEntries({
+      entries,
+      settlements: settlementMap.get(supplier.id) || [],
+      asOfDate
+    });
+
+    return {
+      supplier_id: supplier.id,
+      supplier_name: supplier.name,
+      currency: supplier.currency,
+      current_balance: toNum(supplier.current_balance),
+      ...aging
+    };
+  }).filter((row) => row.totalOutstanding > 0 || row.unappliedCredits > 0 || row.current_balance !== 0);
+
+  const totals = rows.reduce((acc, row) => ({
+    current: acc.current + row.current,
+    days31To60: acc.days31To60 + row.days31To60,
+    days61To90: acc.days61To90 + row.days61To90,
+    days90Plus: acc.days90Plus + row.days90Plus,
+    totalOutstanding: acc.totalOutstanding + row.totalOutstanding,
+    unappliedCredits: acc.unappliedCredits + row.unappliedCredits
+  }), {
+    current: 0,
+    days31To60: 0,
+    days61To90: 0,
+    days90Plus: 0,
+    totalOutstanding: 0,
+    unappliedCredits: 0
+  });
+
+  return { asOfDate, rows, totals };
 }
 
 router.get('/', (req, res) => {
@@ -132,6 +241,11 @@ router.get('/:id/settlements', (req, res) => {
   if (!supplier) return res.status(404).json({ success: false, error: 'المورد غير موجود' });
 
   return res.json({ success: true, data: getSupplierSettlements(id) });
+});
+
+router.get('/reports/aging', (req, res) => {
+  const asOfDate = req.query.asOfDate ? String(req.query.asOfDate) : new Date().toISOString().slice(0, 10);
+  return res.json({ success: true, data: getSuppliersAging(asOfDate) });
 });
 
 router.post('/:id/settlements', requirePermission(PERMISSIONS.SUPPLIERS_SETTLE), (req, res) => {
@@ -275,6 +389,10 @@ router.patch('/:id', requirePermission(PERMISSIONS.SUPPLIERS_EDIT), (req, res) =
 
   const existing = db.prepare('SELECT id, opening_balance, current_balance FROM suppliers WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ success: false, error: 'المورد غير موجود' });
+  const before = db.prepare(`
+    SELECT name, phone, address, opening_balance, current_balance, currency, notes, is_active
+    FROM suppliers WHERE id = ?
+  `).get(id);
 
   const payload = {
     name: String(req.body.name || '').trim(),
@@ -296,7 +414,18 @@ router.patch('/:id', requirePermission(PERMISSIONS.SUPPLIERS_EDIT), (req, res) =
     WHERE id = ?
   `).run(payload.name, payload.phone, payload.address, payload.openingBalance, delta, payload.currency, payload.notes, id);
 
-  writeAuditLog({ userId: req.user.id, entityName: 'suppliers', entityId: id, action: 'UPDATE' });
+  const after = db.prepare(`
+    SELECT name, phone, address, opening_balance, current_balance, currency, notes, is_active
+    FROM suppliers WHERE id = ?
+  `).get(id);
+
+  writeAuditLog({
+    userId: req.user.id,
+    entityName: 'suppliers',
+    entityId: id,
+    action: 'UPDATE',
+    metadata: { before, after }
+  });
   return res.json({ success: true });
 });
 

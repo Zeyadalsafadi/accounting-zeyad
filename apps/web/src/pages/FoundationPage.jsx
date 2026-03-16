@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom';
 import { PERMISSIONS } from '@paint-shop/shared';
 import { APP_NAME, ROLE_LABEL_KEYS } from '../constants/app.js';
-import { getCurrentUser, hasPermission } from '../utils/auth.js';
+import { getCurrentLicense, getCurrentUser, hasPermission } from '../utils/auth.js';
 import { useI18n } from '../i18n/I18nProvider.jsx';
+import { canAccessLicensedPath } from '../utils/license.js';
 
 export default function FoundationPage() {
   const user = getCurrentUser();
+  const license = getCurrentLicense();
   const { t } = useI18n();
 
   const adminActions = [
@@ -23,6 +25,7 @@ export default function FoundationPage() {
   ];
 
   const visibleActions = adminActions.filter((action) => {
+    if (!canAccessLicensedPath(license, action.to)) return false;
     if (action.to === '/sales') return hasPermission(user, PERMISSIONS.SALES_VIEW);
     if (action.to === '/purchases') return hasPermission(user, PERMISSIONS.PURCHASES_VIEW);
     if (action.to === '/products') return hasPermission(user, PERMISSIONS.INVENTORY_VIEW);
@@ -34,6 +37,8 @@ export default function FoundationPage() {
     if (action.to === '/settings') return hasPermission(user, PERMISSIONS.SETTINGS_VIEW);
     return true;
   });
+  const canOpenCategories = hasPermission(user, PERMISSIONS.INVENTORY_VIEW) && canAccessLicensedPath(license, '/categories');
+  const canOpenSettings = hasPermission(user, PERMISSIONS.SETTINGS_VIEW);
 
   return (
     <main className="container">
@@ -65,14 +70,14 @@ export default function FoundationPage() {
                 <td><Link className="btn" to={action.to}>{t('openWindow')}</Link></td>
               </tr>
             ))}
-            {hasPermission(user, PERMISSIONS.SETTINGS_VIEW) ? (
+            {canOpenSettings || canOpenCategories ? (
               <tr>
                 <td>{t('infoManagement')}</td>
                 <td>{t('managementAndReferenceData')}</td>
                 <td>
                   <div className="header-actions">
-                    <Link className="btn secondary" to="/settings">{t('administration')}</Link>
-                    <Link className="btn secondary" to="/categories">{t('categories')}</Link>
+                    {canOpenSettings ? <Link className="btn secondary" to="/settings">{t('administration')}</Link> : null}
+                    {canOpenCategories ? <Link className="btn secondary" to="/categories">{t('categories')}</Link> : null}
                   </div>
                 </td>
               </tr>

@@ -2,6 +2,12 @@ import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import db from '../db.js';
 import { buildUserSession } from '../utils/accessControl.js';
+import {
+  buildLicenseDeviceErrorMessage,
+  buildLicenseModuleErrorMessage,
+  buildLicenseWriteErrorMessage,
+  resolveLicenseRequestContext
+} from '../utils/license.js';
 
 export function authRequired(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -23,6 +29,36 @@ export function authRequired(req, res, next) {
     }
 
     req.user = buildUserSession(user);
+    const licenseContext = resolveLicenseRequestContext(req, { userId: req.user.id });
+    req.license = licenseContext.license;
+
+    if (!licenseContext.allowed) {
+      if (licenseContext.blockCode === 'LICENSE_MODULE_BLOCKED') {
+        return res.status(403).json({
+          success: false,
+          error: buildLicenseModuleErrorMessage(licenseContext.moduleKey, req.license),
+          code: licenseContext.blockCode,
+          data: { license: req.license, moduleKey: licenseContext.moduleKey }
+        });
+      }
+
+      if (licenseContext.blockCode === 'LICENSE_DEVICE_BLOCKED') {
+        return res.status(403).json({
+          success: false,
+          error: buildLicenseDeviceErrorMessage(licenseContext.deviceReason, req.license),
+          code: licenseContext.blockCode,
+          data: { license: req.license }
+        });
+      }
+
+      return res.status(403).json({
+        success: false,
+        error: buildLicenseWriteErrorMessage(req.license),
+        code: licenseContext.blockCode || 'LICENSE_WRITE_BLOCKED',
+        data: { license: req.license }
+      });
+    }
+
     return next();
   } catch {
     return res.status(401).json({ success: false, error: 'رمز دخول غير صالح' });

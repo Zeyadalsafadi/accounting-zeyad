@@ -1,0 +1,23 @@
+{
+  "licenseId": "LIC-2026-0001",
+  "customerName": "اسم العميل أو الشركة",
+  "planCode": "STANDARD",
+  "expiresAt": "2027-03-15T00:00:00.000Z",
+  "graceDays": 7,
+  "maxDevices": 1,
+  "enabledModules": [
+    "sales",
+    "purchases",
+    "inventory",
+    "customers",
+    "suppliers",
+    "reports",
+    "cash-management",
+    "exchange-rate",
+    "currency-exchange",
+    "settings"
+  ],
+  "metadata": {
+    "notes": "عدل هذا الملف قبل إصدار الترخيص الفعلي"
+  }
+}

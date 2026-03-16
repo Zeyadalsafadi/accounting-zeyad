@@ -1,12 +1,14 @@
 import express from 'express';
-import { PERMISSIONS } from '@paint-shop/shared';
+import { PERMISSIONS, SUPPORTED_CURRENCIES } from '@paint-shop/shared';
 import db from '../db.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
 import { getRateForCurrency } from '../utils/exchangeRate.js';
+import { resolveCustomerPrice, resolvePriceTier, resolveProductUnit } from '../utils/productCatalog.js';
 
 const router = express.Router();
 router.use(authRequired);
+const TRANSACTION_LOCK_HOURS = 24;
 
 function toNum(v) {
   return Number(v ?? 0);
@@ -14,6 +16,8 @@ function toNum(v) {
 
 function validateCreate(body) {
   if (!body.invoiceDate) return 'تاريخ الفاتورة مطلوب';
+  if (!SUPPORTED_CURRENCIES.includes(body.currency)) return 'العملة غير مدعومة';
+  if (toNum(body.exchangeRate) <= 0) return 'سعر الصرف النشط غير صالح';
   const paidTotalSyp = toNum(body.paidSyp) + (toNum(body.paidUsd) * toNum(body.exchangeRate));
   if ((!Array.isArray(body.items) || body.items.length === 0) && paidTotalSyp <= 0) {
     return 'يجب إضافة عنصر واحد على الأقل أو تسجيل قبض من العميل';
@@ -31,10 +35,21 @@ function nextInvoiceNo() {
   return `SAL-${String(row.c + 1).padStart(6, '0')}`;
 }
 
+function canOverrideApproved(req) {
+  return Array.isArray(req.user?.permissions) && req.user.permissions.includes(PERMISSIONS.SALES_OVERRIDE_LOCK);
+}
+
+function isOutsideLockWindow(value) {
+  if (!value) return false;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return false;
+  return ((Date.now() - timestamp) / (1000 * 60 * 60)) > TRANSACTION_LOCK_HOURS;
+}
+
 router.get('/', (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const sql = `
-    SELECT s.id, s.invoice_no, s.invoice_date, s.status, s.currency, s.exchange_rate,
+    SELECT s.id, s.invoice_no, s.invoice_date, s.status, s.approval_status, s.currency, s.exchange_rate,
            s.total_original, s.total_base, s.received_original,
            s.paid_syp, s.paid_usd, s.paid_total_syp,
            (s.total_original - s.received_original) AS remaining_original,
@@ -54,9 +69,10 @@ router.get('/:id', (req, res) => {
   if (!id) return res.status(400).json({ success: false, error: 'معرف الفاتورة غير صالح' });
 
   const invoice = db.prepare(`
-    SELECT s.*, c.name AS customer_name
+    SELECT s.*, c.name AS customer_name, u.full_name AS approved_by_name
     FROM sales_invoices s
     LEFT JOIN customers c ON c.id = s.customer_id
+    LEFT JOIN users u ON u.id = s.approved_by_user_id
     WHERE s.id = ?
   `).get(id);
 
@@ -78,8 +94,8 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
   const payload = {
     customerId: req.body.customerId ? Number(req.body.customerId) : null,
     invoiceDate: req.body.invoiceDate,
-    currency: 'SYP',
-    exchangeRate: activeRate,
+    currency: req.body.currency || 'SYP',
+    exchangeRate: getRateForCurrency(req.body.currency || 'SYP'),
     items: (req.body.items || []).filter((item) => Number(item?.productId) && toNum(item?.qty) > 0),
     discount: toNum(req.body.discount),
     paymentType: req.body.paymentType,
@@ -93,13 +109,16 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
   if (payload.paidSyp < 0 || payload.paidUsd < 0) {
     return res.status(400).json({ success: false, error: 'قيم الدفع لا يمكن أن تكون سالبة' });
   }
-  if (payload.paidUsd > 0 && activeRate <= 0) {
+  if ((payload.paidUsd > 0 || (payload.currency === 'USD' && payload.paidSyp > 0)) && activeRate <= 0) {
     return res.status(400).json({ success: false, error: 'سعر الصرف النشط غير صالح' });
   }
 
   if (payload.customerId) {
-    const customer = db.prepare('SELECT id, is_active FROM customers WHERE id = ?').get(payload.customerId);
+    const customer = db.prepare('SELECT id, currency, is_active FROM customers WHERE id = ?').get(payload.customerId);
     if (!customer || customer.is_active !== 1) return res.status(400).json({ success: false, error: 'العميل غير موجود أو معطل' });
+    if (customer.currency !== payload.currency) {
+      return res.status(400).json({ success: false, error: 'عملة الفاتورة يجب أن تطابق عملة العميل الحالية' });
+    }
   }
   if (payload.items.length === 0 && !payload.customerId) {
     return res.status(400).json({ success: false, error: 'يجب اختيار عميل عند تسجيل قبض بدون بيع منتجات' });
@@ -109,13 +128,18 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
     lineNo: index + 1,
     productId: Number(item.productId),
     qty: toNum(item.qty),
-    unitPrice: toNum(item.unitPrice)
+    unitPrice: toNum(item.unitPrice),
+    unitName: item.unitName ? String(item.unitName) : null,
+    priceTierCode: item.priceTierCode ? String(item.priceTierCode) : null
   }));
 
   const subtotalOriginal = rows.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const totalOriginal = Math.max(0, subtotalOriginal - payload.discount);
   const paidTotalSyp = payload.paidSyp + (payload.paidUsd * activeRate);
-  const settlementDelta = totalOriginal - paidTotalSyp;
+  const paidOriginal = payload.currency === 'USD'
+    ? payload.paidUsd + (activeRate > 0 ? (payload.paidSyp / activeRate) : 0)
+    : paidTotalSyp;
+  const settlementDelta = totalOriginal - paidOriginal;
   if (settlementDelta !== 0 && !payload.customerId) {
     return res.status(400).json({ success: false, error: 'يجب اختيار عميل عند وجود رصيد غير مسوّى على الفاتورة' });
   }
@@ -136,7 +160,7 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
     if (payload.paidUsd > 0 && !usdCashAccount) throw new Error('لا يوجد صندوق نشط بعملة USD');
 
     const invoiceNo = nextInvoiceNo();
-    const totalBase = totalOriginal;
+    const totalBase = totalOriginal * payload.exchangeRate;
     const paidBase = paidTotalSyp;
 
     const invResult = db.prepare(`
@@ -144,8 +168,9 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
         invoice_no, customer_id, invoice_date, currency, exchange_rate,
         subtotal_original, discount_original, total_original, total_base,
         received_original, received_base, payment_type, cash_account_id, notes, created_by_user_id,
+        approval_status,
         paid_syp, paid_usd, paid_total_syp, syp_cash_account_id, usd_cash_account_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       invoiceNo,
       payload.customerId,
@@ -156,12 +181,13 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
       payload.discount,
       totalOriginal,
       totalBase,
-      paidTotalSyp,
+      paidOriginal,
       paidBase,
       resolvedPaymentType,
       sypCashAccount?.id || usdCashAccount?.id || null,
       payload.notes,
       req.user.id,
+      'DRAFT',
       payload.paidSyp,
       payload.paidUsd,
       paidTotalSyp,
@@ -175,21 +201,35 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
       const product = db.prepare('SELECT id, current_qty, avg_cost_base FROM products WHERE id = ? AND is_active = 1').get(row.productId);
       if (!product) throw new Error('أحد المنتجات غير موجود أو معطل');
 
+      const resolvedUnit = resolveProductUnit(row.productId, row.unitName);
+      if (!resolvedUnit) throw new Error('وحدة البيع غير معرفة لهذا المنتج');
+      const customerPrice = resolveCustomerPrice(row.productId, payload.customerId, resolvedUnit.id);
+      const resolvedTier = customerPrice
+        ? {
+            id: customerPrice.id,
+            tier_code: 'SPECIAL',
+            tier_name: `Special - ${customerPrice.customer_name}`,
+            price_syp: customerPrice.price_syp
+          }
+        : resolvePriceTier(row.productId, resolvedUnit.id, row.priceTierCode);
+      const baseQty = row.qty * toNum(resolvedUnit.conversion_factor);
+
       const currentQty = toNum(product.current_qty);
-      if (currentQty < row.qty) throw new Error('المخزون غير كافٍ لإتمام البيع');
+      if (currentQty < baseQty) throw new Error('المخزون غير كافٍ لإتمام البيع');
 
       const unitCostBase = toNum(product.avg_cost_base);
       const lineOriginal = row.qty * row.unitPrice;
-      const lineBase = lineOriginal;
-      const lineCogsBase = row.qty * unitCostBase;
+      const lineBase = lineOriginal * payload.exchangeRate;
+      const lineCogsBase = baseQty * unitCostBase;
       const lineProfitBase = lineBase - lineCogsBase;
 
       db.prepare(`
         INSERT INTO sales_invoice_items (
           sales_invoice_id, line_no, product_id, qty,
           unit_price_original, line_total_original, line_total_base,
-          unit_cost_base_at_sale, line_cogs_base, line_profit_base
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          unit_cost_base_at_sale, line_cogs_base, line_profit_base,
+          selected_unit_name, selected_unit_factor, selected_price_tier_code, selected_price_tier_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         invoiceId,
         row.lineNo,
@@ -200,10 +240,14 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
         lineBase,
         unitCostBase,
         lineCogsBase,
-        lineProfitBase
+        lineProfitBase,
+        resolvedUnit.unit_name,
+        resolvedUnit.conversion_factor,
+        resolvedTier?.tier_code || null,
+        resolvedTier?.tier_name || null
       );
 
-      const newQty = currentQty - row.qty;
+      const newQty = currentQty - baseQty;
 
       db.prepare('UPDATE products SET current_qty = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newQty, row.productId);
 
@@ -216,7 +260,7 @@ router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), (req, res) => {
       `).run(
         row.productId,
         payload.invoiceDate,
-        row.qty,
+        baseQty,
         unitCostBase,
         lineCogsBase,
         unitCostBase,
@@ -275,6 +319,12 @@ router.post('/:id/cancel', requirePermission(PERMISSIONS.SALES_CANCEL), (req, re
     const invoice = db.prepare('SELECT * FROM sales_invoices WHERE id = ?').get(id);
     if (!invoice) throw new Error('الفاتورة غير موجودة');
     if (invoice.status === 'CANCELLED') throw new Error('الفاتورة ملغاة مسبقاً');
+    if (invoice.approval_status === 'APPROVED' && !canOverrideApproved(req)) {
+      throw new Error('لا يمكن إلغاء فاتورة مبيعات معتمدة بدون صلاحية تجاوز');
+    }
+    if (!canOverrideApproved(req) && isOutsideLockWindow(invoice.created_at || invoice.invoice_date)) {
+      throw new Error('انتهت نافذة تعديل/إلغاء فاتورة المبيعات');
+    }
 
     const items = db.prepare('SELECT * FROM sales_invoice_items WHERE sales_invoice_id = ? ORDER BY line_no').all(id);
 
@@ -341,6 +391,57 @@ router.post('/:id/cancel', requirePermission(PERMISSIONS.SALES_CANCEL), (req, re
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message || 'فشل إلغاء فاتورة البيع' });
   }
+});
+
+router.post('/:id/approve', requirePermission(PERMISSIONS.SALES_APPROVE), (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'معرف الفاتورة غير صالح' });
+
+  const invoice = db.prepare('SELECT id, status, approval_status FROM sales_invoices WHERE id = ?').get(id);
+  if (!invoice) return res.status(404).json({ success: false, error: 'الفاتورة غير موجودة' });
+  if (invoice.status === 'CANCELLED') {
+    return res.status(400).json({ success: false, error: 'لا يمكن اعتماد فاتورة ملغاة' });
+  }
+  if (invoice.approval_status === 'APPROVED') {
+    return res.status(400).json({ success: false, error: 'الفاتورة معتمدة مسبقاً' });
+  }
+
+  db.prepare(`
+    UPDATE sales_invoices
+    SET approval_status = 'APPROVED', approved_at = CURRENT_TIMESTAMP, approved_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(req.user.id, id);
+
+  writeAuditLog({ userId: req.user.id, entityName: 'sales_invoices', entityId: id, action: 'APPROVE' });
+  return res.json({ success: true });
+});
+
+router.post('/:id/unapprove', requirePermission(PERMISSIONS.SALES_APPROVE), (req, res) => {
+  const id = Number(req.params.id);
+  const reason = String(req.body.reason || '').trim();
+  if (!id) return res.status(400).json({ success: false, error: 'معرف الفاتورة غير صالح' });
+  if (!reason) return res.status(400).json({ success: false, error: 'سبب إلغاء الاعتماد مطلوب' });
+  if (!canOverrideApproved(req)) {
+    return res.status(403).json({ success: false, error: 'لا توجد صلاحية لإلغاء اعتماد فاتورة المبيعات' });
+  }
+
+  const invoice = db.prepare('SELECT id, status, approval_status FROM sales_invoices WHERE id = ?').get(id);
+  if (!invoice) return res.status(404).json({ success: false, error: 'الفاتورة غير موجودة' });
+  if (invoice.status === 'CANCELLED') {
+    return res.status(400).json({ success: false, error: 'لا يمكن إلغاء اعتماد فاتورة ملغاة' });
+  }
+  if (invoice.approval_status !== 'APPROVED') {
+    return res.status(400).json({ success: false, error: 'الفاتورة ليست معتمدة' });
+  }
+
+  db.prepare(`
+    UPDATE sales_invoices
+    SET approval_status = 'DRAFT', approved_at = NULL, approved_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id);
+
+  writeAuditLog({ userId: req.user.id, entityName: 'sales_invoices', entityId: id, action: 'UNAPPROVE', reason });
+  return res.json({ success: true });
 });
 
 export default router;

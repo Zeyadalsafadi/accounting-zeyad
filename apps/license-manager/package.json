@@ -1,0 +1,63 @@
+{
+  "name": "paint-shop-license-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local license management utility for Dukanti MyShop",
+  "author": "Dukanti",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "node --watch server/server.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start:desktop": "npm run build && electron .",
+    "build:exe": "npm run build && electron-builder --win portable",
+    "preview": "vite preview",
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "@paint-shop/shared": "0.1.0",
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "electron": "37.2.0",
+    "electron-builder": "26.8.1",
+    "vite": "^5.4.8"
+  },
+  "build": {
+    "appId": "com.dukanti.licensemanager",
+    "productName": "Dukanti MyShop License Manager",
+    "electronVersion": "37.2.0",
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "server/**/*",
+      "electron/**/*",
+      "package.json",
+      "README.md",
+      "OWNER-GUIDE.ar.md"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Dukanti-MyShop-License-Manager-${version}.exe"
+    }
+  }
+}

@@ -73,6 +73,7 @@ router.get('/summary', (_req, res) => {
         netProfit
       },
       cashBalances,
+      lowStockCount: lowStock.length,
       lowStock,
       latestActivities
     }

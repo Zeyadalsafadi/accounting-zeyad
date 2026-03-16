@@ -15,37 +15,70 @@ function normalizeRange(query) {
   const today = new Date().toISOString().slice(0, 10);
   const from = String(query.from || startOfMonth(today));
   const to = String(query.to || today);
-  return { from, to };
+  const categoryId = query.categoryId ? Number(query.categoryId) : null;
+  const unitName = query.unitName ? String(query.unitName).trim() : null;
+  const tierCode = query.tierCode ? String(query.tierCode).trim() : null;
+  return {
+    from,
+    to,
+    categoryId: Number.isFinite(categoryId) && categoryId > 0 ? categoryId : null,
+    unitName: unitName || null,
+    tierCode: tierCode || null
+  };
 }
 
-router.get('/profit-loss', (req, res) => {
-  const { from, to } = normalizeRange(req.query);
+function previousRange(from, to) {
+  const fromDate = new Date(`${from}T00:00:00`);
+  const toDate = new Date(`${to}T00:00:00`);
+  const diffDays = Math.floor((toDate - fromDate) / 86400000) + 1;
+  const previousTo = new Date(fromDate);
+  previousTo.setDate(previousTo.getDate() - 1);
+  const previousFrom = new Date(previousTo);
+  previousFrom.setDate(previousFrom.getDate() - diffDays + 1);
+  const format = (value) => value.toISOString().slice(0, 10);
+  return {
+    from: format(previousFrom),
+    to: format(previousTo)
+  };
+}
 
-  if (from > to) {
-    return res.status(400).json({ success: false, error: 'تاريخ البداية يجب أن يكون قبل تاريخ النهاية' });
+function buildLineFilters(filters, itemAlias = 'i', productAlias = 'p') {
+  const clauses = [];
+  const params = [];
+  if (filters.categoryId) {
+    clauses.push(`${productAlias}.category_id = ?`);
+    params.push(filters.categoryId);
   }
+  if (filters.unitName) {
+    clauses.push(`${itemAlias}.selected_unit_name = ?`);
+    params.push(filters.unitName);
+  }
+  if (filters.tierCode) {
+    clauses.push(`${itemAlias}.selected_price_tier_code = ?`);
+    params.push(filters.tierCode);
+  }
+  return {
+    sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '',
+    params
+  };
+}
 
+function summaryForRange(from, to, filters) {
+  const lineFilters = buildLineFilters(filters);
   const revenueRow = db.prepare(`
     SELECT
-      COALESCE(SUM(s.total_base), 0) AS revenue,
-      COALESCE(SUM(s.received_base), 0) AS collected,
-      COUNT(*) AS invoice_count,
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_cogs_base), 0) AS cogs,
+      COUNT(DISTINCT s.id) AS invoice_count,
       COUNT(DISTINCT s.customer_id) AS customer_count
-    FROM sales_invoices s
-    WHERE s.status = 'ACTIVE'
-      AND s.invoice_date >= ?
-      AND s.invoice_date <= ?
-      AND s.total_base > 0
-  `).get(from, to);
-
-  const cogsRow = db.prepare(`
-    SELECT COALESCE(SUM(i.line_cogs_base), 0) AS cogs
     FROM sales_invoice_items i
     JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    JOIN products p ON p.id = i.product_id
     WHERE s.status = 'ACTIVE'
       AND s.invoice_date >= ?
       AND s.invoice_date <= ?
-  `).get(from, to);
+      ${lineFilters.sql}
+  `).get(from, to, ...lineFilters.params);
 
   const expensesRow = db.prepare(`
     SELECT
@@ -56,6 +89,40 @@ router.get('/profit-loss', (req, res) => {
       AND expense_date >= ?
       AND expense_date <= ?
   `).get(from, to);
+
+  const revenue = Number(revenueRow.revenue || 0);
+  const cogs = Number(revenueRow.cogs || 0);
+  const grossProfit = revenue - cogs;
+  const expenses = Number(expensesRow.expenses || 0);
+  const netProfit = grossProfit - expenses;
+
+  return {
+    revenue,
+    cogs,
+    grossProfit,
+    expenses,
+    netProfit,
+    grossMarginPct: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
+    netMarginPct: revenue > 0 ? (netProfit / revenue) * 100 : 0,
+    invoiceCount: Number(revenueRow.invoice_count || 0),
+    customerCount: Number(revenueRow.customer_count || 0),
+    averageInvoice: Number(revenueRow.invoice_count || 0) > 0 ? revenue / Number(revenueRow.invoice_count) : 0,
+    expenseCount: Number(expensesRow.expense_count || 0)
+  };
+}
+
+router.get('/profit-loss', (req, res) => {
+  const { from, to, categoryId, unitName, tierCode } = normalizeRange(req.query);
+
+  if (from > to) {
+    return res.status(400).json({ success: false, error: 'تاريخ البداية يجب أن يكون قبل تاريخ النهاية' });
+  }
+
+  const lineFilters = { categoryId, unitName, tierCode };
+  const summary = summaryForRange(from, to, lineFilters);
+  const comparisonRange = previousRange(from, to);
+  const previousSummary = summaryForRange(comparisonRange.from, comparisonRange.to, lineFilters);
+  const currentLineFilters = buildLineFilters(lineFilters);
 
   const expenseBreakdown = db.prepare(`
     SELECT
@@ -73,23 +140,20 @@ router.get('/profit-loss', (req, res) => {
   const salesByDate = db.prepare(`
     SELECT
       s.invoice_date AS period_date,
-      COUNT(*) AS invoice_count,
+      COUNT(DISTINCT s.id) AS invoice_count,
       COUNT(DISTINCT s.customer_id) AS customer_count,
-      COALESCE(SUM(s.total_base), 0) AS revenue,
-      COALESCE(SUM(item_totals.cogs), 0) AS cogs
-    FROM sales_invoices s
-    LEFT JOIN (
-      SELECT sales_invoice_id, COALESCE(SUM(line_cogs_base), 0) AS cogs
-      FROM sales_invoice_items
-      GROUP BY sales_invoice_id
-    ) item_totals ON item_totals.sales_invoice_id = s.id
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_cogs_base), 0) AS cogs
+    FROM sales_invoice_items i
+    JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    JOIN products p ON p.id = i.product_id
     WHERE s.status = 'ACTIVE'
       AND s.invoice_date >= ?
       AND s.invoice_date <= ?
-      AND s.total_base > 0
+      ${currentLineFilters.sql}
     GROUP BY s.invoice_date
     ORDER BY s.invoice_date ASC
-  `).all(from, to);
+  `).all(from, to, ...currentLineFilters.params);
 
   const expensesByDate = db.prepare(`
     SELECT
@@ -103,11 +167,153 @@ router.get('/profit-loss', (req, res) => {
     ORDER BY expense_date ASC
   `).all(from, to);
 
-  const revenue = Number(revenueRow.revenue || 0);
-  const cogs = Number(cogsRow.cogs || 0);
-  const grossProfit = revenue - cogs;
-  const expenses = Number(expensesRow.expenses || 0);
-  const netProfit = grossProfit - expenses;
+  const productProfitability = db.prepare(`
+    SELECT
+      i.product_id AS productId,
+      p.name_ar AS productName,
+      c.name_ar AS categoryName,
+      SUM(i.qty) AS qtySold,
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_cogs_base), 0) AS cogs,
+      COALESCE(SUM(i.line_profit_base), 0) AS profit,
+      COUNT(DISTINCT i.sales_invoice_id) AS invoiceCount
+    FROM sales_invoice_items i
+    JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    JOIN products p ON p.id = i.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE s.status = 'ACTIVE'
+      AND s.invoice_date >= ?
+      AND s.invoice_date <= ?
+      ${currentLineFilters.sql}
+    GROUP BY i.product_id, p.name_ar, c.name_ar
+    ORDER BY profit DESC, revenue DESC, productName ASC
+    LIMIT 15
+  `).all(from, to, ...currentLineFilters.params).map((row) => ({
+    ...row,
+    qtySold: Number(row.qtySold || 0),
+    revenue: Number(row.revenue || 0),
+    cogs: Number(row.cogs || 0),
+    profit: Number(row.profit || 0),
+    invoiceCount: Number(row.invoiceCount || 0),
+    marginPct: Number(row.revenue || 0) > 0 ? (Number(row.profit || 0) / Number(row.revenue || 0)) * 100 : 0
+  }));
+
+  const customerProfitability = db.prepare(`
+    SELECT
+      s.customer_id AS customerId,
+      COALESCE(c.name, 'Cash Customer') AS customerName,
+      COUNT(DISTINCT s.id) AS invoiceCount,
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_cogs_base), 0) AS cogs,
+      COALESCE(SUM(i.line_profit_base), 0) AS profit
+    FROM sales_invoice_items i
+    JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    LEFT JOIN customers c ON c.id = s.customer_id
+    JOIN products p ON p.id = i.product_id
+    WHERE s.status = 'ACTIVE'
+      AND s.invoice_date >= ?
+      AND s.invoice_date <= ?
+      ${currentLineFilters.sql}
+    GROUP BY s.customer_id, COALESCE(c.name, 'Cash Customer')
+    ORDER BY profit DESC, revenue DESC, customerName ASC
+    LIMIT 15
+  `).all(from, to, ...currentLineFilters.params).map((row) => ({
+    ...row,
+    invoiceCount: Number(row.invoiceCount || 0),
+    revenue: Number(row.revenue || 0),
+    cogs: Number(row.cogs || 0),
+    profit: Number(row.profit || 0),
+    marginPct: Number(row.revenue || 0) > 0 ? (Number(row.profit || 0) / Number(row.revenue || 0)) * 100 : 0
+  }));
+
+  const invoiceProfitability = db.prepare(`
+    SELECT
+      s.id AS invoiceId,
+      s.invoice_no AS invoiceNo,
+      s.invoice_date AS invoiceDate,
+      COALESCE(c.name, 'Cash Customer') AS customerName,
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_cogs_base), 0) AS cogs,
+      COALESCE(SUM(i.line_profit_base), 0) AS profit,
+      COUNT(*) AS linesCount
+    FROM sales_invoice_items i
+    JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    LEFT JOIN customers c ON c.id = s.customer_id
+    JOIN products p ON p.id = i.product_id
+    WHERE s.status = 'ACTIVE'
+      AND s.invoice_date >= ?
+      AND s.invoice_date <= ?
+      ${currentLineFilters.sql}
+    GROUP BY s.id, s.invoice_no, s.invoice_date, COALESCE(c.name, 'Cash Customer')
+    ORDER BY profit DESC, revenue DESC, s.invoice_date ASC
+    LIMIT 20
+  `).all(from, to, ...currentLineFilters.params).map((row) => ({
+    ...row,
+    revenue: Number(row.revenue || 0),
+    cogs: Number(row.cogs || 0),
+    profit: Number(row.profit || 0),
+    linesCount: Number(row.linesCount || 0),
+    marginPct: Number(row.revenue || 0) > 0 ? (Number(row.profit || 0) / Number(row.revenue || 0)) * 100 : 0
+  }));
+
+  const topProducts = [...productProfitability].slice(0, 5);
+  const bottomProducts = [...productProfitability].sort((a, b) => a.profit - b.profit || a.revenue - b.revenue).slice(0, 5);
+  const topCustomers = [...customerProfitability].slice(0, 5);
+  const bottomCustomers = [...customerProfitability].sort((a, b) => a.profit - b.profit || a.revenue - b.revenue).slice(0, 5);
+
+  const salesByUnit = db.prepare(`
+    SELECT
+      i.selected_unit_name AS unitName,
+      COUNT(*) AS linesCount,
+      COALESCE(SUM(i.qty), 0) AS qtySold,
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_profit_base), 0) AS profit
+    FROM sales_invoice_items i
+    JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    JOIN products p ON p.id = i.product_id
+    WHERE s.status = 'ACTIVE'
+      AND s.invoice_date >= ?
+      AND s.invoice_date <= ?
+      ${currentLineFilters.sql}
+    GROUP BY i.selected_unit_name
+    ORDER BY revenue DESC, unitName ASC
+  `).all(from, to, ...currentLineFilters.params).map((row) => ({
+    ...row,
+    qtySold: Number(row.qtySold || 0),
+    revenue: Number(row.revenue || 0),
+    profit: Number(row.profit || 0),
+    linesCount: Number(row.linesCount || 0)
+  }));
+
+  const salesByPriceTier = db.prepare(`
+    SELECT
+      COALESCE(i.selected_price_tier_code, 'UNSPECIFIED') AS tierCode,
+      COALESCE(i.selected_price_tier_name, COALESCE(i.selected_price_tier_code, 'Unspecified')) AS tierName,
+      COUNT(*) AS linesCount,
+      COALESCE(SUM(i.qty), 0) AS qtySold,
+      COALESCE(SUM(i.line_total_base), 0) AS revenue,
+      COALESCE(SUM(i.line_profit_base), 0) AS profit
+    FROM sales_invoice_items i
+    JOIN sales_invoices s ON s.id = i.sales_invoice_id
+    JOIN products p ON p.id = i.product_id
+    WHERE s.status = 'ACTIVE'
+      AND s.invoice_date >= ?
+      AND s.invoice_date <= ?
+      ${currentLineFilters.sql}
+    GROUP BY COALESCE(i.selected_price_tier_code, 'UNSPECIFIED'), COALESCE(i.selected_price_tier_name, COALESCE(i.selected_price_tier_code, 'Unspecified'))
+    ORDER BY revenue DESC, tierName ASC
+  `).all(from, to, ...currentLineFilters.params).map((row) => ({
+    ...row,
+    qtySold: Number(row.qtySold || 0),
+    revenue: Number(row.revenue || 0),
+    profit: Number(row.profit || 0),
+    linesCount: Number(row.linesCount || 0)
+  }));
+
+  const topUnits = [...salesByUnit].sort((a, b) => b.profit - a.profit || b.revenue - a.revenue).slice(0, 5);
+  const bottomUnits = [...salesByUnit].sort((a, b) => a.profit - b.profit || a.revenue - b.revenue).slice(0, 5);
+  const topPriceTiers = [...salesByPriceTier].sort((a, b) => b.profit - a.profit || b.revenue - a.revenue).slice(0, 5);
+  const bottomPriceTiers = [...salesByPriceTier].sort((a, b) => a.profit - b.profit || a.revenue - b.revenue).slice(0, 5);
 
   const timelineMap = new Map();
 
@@ -151,21 +357,34 @@ router.get('/profit-loss', (req, res) => {
     data: {
       period: { from, to },
       currency: 'SYP',
-      summary: {
-        revenue,
-        cogs,
-        grossProfit,
-        expenses,
-        netProfit,
-        grossMarginPct: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
-        netMarginPct: revenue > 0 ? (netProfit / revenue) * 100 : 0,
-        invoiceCount: Number(revenueRow.invoice_count || 0),
-        customerCount: Number(revenueRow.customer_count || 0),
-        averageInvoice: Number(revenueRow.invoice_count || 0) > 0 ? revenue / Number(revenueRow.invoice_count) : 0,
-        expenseCount: Number(expensesRow.expense_count || 0)
+      filters: { categoryId, unitName, tierCode },
+      summary,
+      comparison: {
+        previousPeriod: comparisonRange,
+        previousSummary,
+        deltas: {
+          revenue: summary.revenue - previousSummary.revenue,
+          cogs: summary.cogs - previousSummary.cogs,
+          grossProfit: summary.grossProfit - previousSummary.grossProfit,
+          expenses: summary.expenses - previousSummary.expenses,
+          netProfit: summary.netProfit - previousSummary.netProfit
+        }
       },
       expenseBreakdown,
-      timeline
+      timeline,
+      productProfitability,
+      customerProfitability,
+      invoiceProfitability,
+      salesByUnit,
+      salesByPriceTier,
+      topUnits,
+      bottomUnits,
+      topPriceTiers,
+      bottomPriceTiers,
+      topProducts,
+      bottomProducts,
+      topCustomers,
+      bottomCustomers
     }
   });
 });

@@ -4,6 +4,7 @@ import db from '../db.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { writeAuditLog } from '../utils/audit.js';
 import { getRateForCurrency } from '../utils/exchangeRate.js';
+import { computeAgingFromEntries } from '../utils/aging.js';
 
 const router = express.Router();
 router.use(authRequired);
@@ -17,6 +18,13 @@ function validatePayload(payload) {
 
 function toNum(value) {
   return Number(value ?? 0);
+}
+
+function convertSettlementToCustomerCurrency(currency, receivedSyp, receivedUsd, usdExchangeRate) {
+  if (currency === 'USD') {
+    return toNum(receivedUsd) + (usdExchangeRate > 0 ? (toNum(receivedSyp) / usdExchangeRate) : 0);
+  }
+  return toNum(receivedSyp) + (toNum(receivedUsd) * usdExchangeRate);
 }
 
 function resolveCashAccountByCurrency(currency) {
@@ -38,14 +46,20 @@ function getCustomerSummary(id) {
     SELECT
       COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN total_original ELSE 0 END), 0) AS total_sales,
       COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN received_original ELSE 0 END), 0) AS total_collections_from_invoices,
-      COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN (total_original - received_original) ELSE 0 END), 0) AS outstanding_from_sales,
       COALESCE(SUM(CASE WHEN status != 'CANCELLED' THEN 1 ELSE 0 END), 0) AS invoice_count,
       MAX(invoice_date) AS last_transaction_date
     FROM sales_invoices
     WHERE customer_id = ?
   `).get(id);
 
+  const standaloneCollections = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM customer_collections
+    WHERE customer_id = ?
+  `).get(id);
+
   const currentBalance = toNum(customer.current_balance);
+  const totalCollections = toNum(totals?.total_collections_from_invoices) + toNum(standaloneCollections?.total);
 
   return {
     customer_id: customer.id,
@@ -54,8 +68,9 @@ function getCustomerSummary(id) {
     opening_balance: toNum(customer.opening_balance),
     current_balance: currentBalance,
     total_sales: toNum(totals?.total_sales),
-    total_collections_from_invoices: toNum(totals?.total_collections_from_invoices),
-    outstanding_from_sales: toNum(totals?.outstanding_from_sales),
+    total_collections_from_invoices: totalCollections,
+    standalone_collections: toNum(standaloneCollections?.total),
+    outstanding_from_sales: toNum(totals?.total_sales) - totalCollections,
     amount_receivable_from_customer: Math.max(currentBalance, 0),
     customer_credit_in_our_favor: Math.max(currentBalance * -1, 0),
     invoice_count: toNum(totals?.invoice_count),
@@ -73,6 +88,109 @@ function getCustomerCollections(id) {
     WHERE c.customer_id = ?
     ORDER BY c.id DESC
   `).all(id);
+}
+
+function getCustomersAging(asOfDate) {
+  const customers = db.prepare(`
+    SELECT id, name, current_balance, opening_balance, currency, created_at, is_active
+    FROM customers
+    WHERE is_active = 1
+    ORDER BY name
+  `).all();
+
+  const invoices = db.prepare(`
+    SELECT customer_id, invoice_date, (total_original - received_original) AS remaining_original
+    FROM sales_invoices
+    WHERE status != 'CANCELLED'
+      AND customer_id IS NOT NULL
+      AND COALESCE(total_original - received_original, 0) > 0
+  `).all();
+
+  const collections = db.prepare(`
+    SELECT customer_id, collection_date, amount
+    FROM customer_collections
+    WHERE COALESCE(amount, 0) > 0
+  `).all();
+
+  const invoiceCredits = db.prepare(`
+    SELECT customer_id, invoice_date, ABS(total_original - received_original) AS credit_amount
+    FROM sales_invoices
+    WHERE status != 'CANCELLED'
+      AND customer_id IS NOT NULL
+      AND COALESCE(total_original - received_original, 0) < 0
+  `).all();
+
+  const invoiceMap = new Map();
+  const collectionMap = new Map();
+
+  for (const row of invoices) {
+    if (!invoiceMap.has(row.customer_id)) invoiceMap.set(row.customer_id, []);
+    invoiceMap.get(row.customer_id).push({
+      type: 'INVOICE',
+      date: row.invoice_date,
+      amount: toNum(row.remaining_original)
+    });
+  }
+
+  for (const row of collections) {
+    if (!collectionMap.has(row.customer_id)) collectionMap.set(row.customer_id, []);
+    collectionMap.get(row.customer_id).push({
+      date: row.collection_date,
+      amount: toNum(row.amount)
+    });
+  }
+
+  for (const row of invoiceCredits) {
+    if (!collectionMap.has(row.customer_id)) collectionMap.set(row.customer_id, []);
+    collectionMap.get(row.customer_id).push({
+      date: row.invoice_date,
+      amount: toNum(row.credit_amount)
+    });
+  }
+
+  const rows = customers.map((customer) => {
+    const entries = [];
+    if (toNum(customer.opening_balance) > 0) {
+      entries.push({
+        type: 'OPENING',
+        date: String(customer.created_at || asOfDate).slice(0, 10),
+        amount: toNum(customer.opening_balance)
+      });
+    }
+    entries.push(...(invoiceMap.get(customer.id) || []));
+
+    const aging = computeAgingFromEntries({
+      entries,
+      settlements: collectionMap.get(customer.id) || [],
+      asOfDate
+    });
+
+    return {
+      customer_id: customer.id,
+      customer_name: customer.name,
+      currency: customer.currency,
+      current_balance: toNum(customer.current_balance),
+      ...aging
+    };
+  }).filter((row) => row.totalOutstanding > 0 || row.unappliedCredits > 0 || row.current_balance !== 0);
+
+  const totals = rows.reduce((acc, row) => ({
+    current: acc.current + row.current,
+    days31To60: acc.days31To60 + row.days31To60,
+    days61To90: acc.days61To90 + row.days61To90,
+    days90Plus: acc.days90Plus + row.days90Plus,
+    totalOutstanding: acc.totalOutstanding + row.totalOutstanding,
+    unappliedCredits: acc.unappliedCredits + row.unappliedCredits
+  }), {
+    current: 0,
+    days31To60: 0,
+    days61To90: 0,
+    days90Plus: 0,
+    totalOutstanding: 0,
+    unappliedCredits: 0
+  });
+
+  return { asOfDate, rows, totals };
 }
 
 router.get('/', (req, res) => {
@@ -121,6 +239,11 @@ router.get('/:id/collections', (req, res) => {
   return res.json({ success: true, data: getCustomerCollections(id) });
 });
 
+router.get('/reports/aging', (req, res) => {
+  const asOfDate = req.query.asOfDate ? String(req.query.asOfDate) : new Date().toISOString().slice(0, 10);
+  return res.json({ success: true, data: getCustomersAging(asOfDate) });
+});
+
 router.post('/:id/collections', requirePermission(PERMISSIONS.CUSTOMERS_COLLECT), (req, res) => {
   const customerId = Number(req.params.id);
   if (!customerId) return res.status(400).json({ success: false, error: 'معرف العميل غير صالح' });
@@ -155,8 +278,14 @@ router.post('/:id/collections', requirePermission(PERMISSIONS.CUSTOMERS_COLLECT)
   }
 
   const totalSettledSyp = payload.receivedSyp + (payload.receivedUsd * usdExchangeRate);
+  const totalSettledOriginal = convertSettlementToCustomerCurrency(
+    customer.currency,
+    payload.receivedSyp,
+    payload.receivedUsd,
+    usdExchangeRate
+  );
 
-  if (totalSettledSyp > toNum(customer.current_balance)) {
+  if (totalSettledOriginal > toNum(customer.current_balance)) {
     return res.status(400).json({ success: false, error: 'قيمة التحصيل أكبر من الرصيد المستحق على العميل' });
   }
 
@@ -169,7 +298,7 @@ router.post('/:id/collections', requirePermission(PERMISSIONS.CUSTOMERS_COLLECT)
     return res.status(400).json({ success: false, error: error.message });
   }
 
-  const balanceAfter = toNum(customer.current_balance) - totalSettledSyp;
+  const balanceAfter = toNum(customer.current_balance) - totalSettledOriginal;
 
   const trx = db.transaction(() => {
     const result = db.prepare(`
@@ -182,8 +311,8 @@ router.post('/:id/collections', requirePermission(PERMISSIONS.CUSTOMERS_COLLECT)
     `).run(
       customerId,
       payload.date,
-      totalSettledSyp,
-      'SYP',
+      totalSettledOriginal,
+      customer.currency,
       sypCashAccount?.id || usdCashAccount?.id,
       payload.reference,
       payload.notes,
@@ -294,6 +423,10 @@ router.patch('/:id', requirePermission(PERMISSIONS.CUSTOMERS_EDIT), (req, res) =
 
   const existing = db.prepare('SELECT id, opening_balance FROM customers WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ success: false, error: 'العميل غير موجود' });
+  const before = db.prepare(`
+    SELECT name, phone, address, opening_balance, current_balance, currency, notes, is_active
+    FROM customers WHERE id = ?
+  `).get(id);
 
   const payload = {
     name: String(req.body.name || '').trim(),
@@ -315,7 +448,18 @@ router.patch('/:id', requirePermission(PERMISSIONS.CUSTOMERS_EDIT), (req, res) =
     WHERE id = ?
   `).run(payload.name, payload.phone, payload.address, payload.openingBalance, delta, payload.currency, payload.notes, id);
 
-  writeAuditLog({ userId: req.user.id, entityName: 'customers', entityId: id, action: 'UPDATE' });
+  const after = db.prepare(`
+    SELECT name, phone, address, opening_balance, current_balance, currency, notes, is_active
+    FROM customers WHERE id = ?
+  `).get(id);
+
+  writeAuditLog({
+    userId: req.user.id,
+    entityName: 'customers',
+    entityId: id,
+    action: 'UPDATE',
+    metadata: { before, after }
+  });
   return res.json({ success: true });
 });
 

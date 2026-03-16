@@ -7,6 +7,7 @@ import { getRateForCurrency } from '../utils/exchangeRate.js';
 
 const router = express.Router();
 router.use(authRequired);
+const TRANSACTION_LOCK_HOURS = 24;
 
 function toNum(v) {
   return Number(v ?? 0);
@@ -29,6 +30,17 @@ function resolveCashAccountByCurrency(currency) {
   return account;
 }
 
+function canOverrideApproved(req) {
+  return Array.isArray(req.user?.permissions) && req.user.permissions.includes(PERMISSIONS.EXPENSES_OVERRIDE_LOCK);
+}
+
+function isOutsideLockWindow(value) {
+  if (!value) return false;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return false;
+  return ((Date.now() - timestamp) / (1000 * 60 * 60)) > TRANSACTION_LOCK_HOURS;
+}
+
 router.get('/', (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const from = req.query.from ? String(req.query.from) : null;
@@ -36,10 +48,11 @@ router.get('/', (req, res) => {
 
   let sql = `
     SELECT e.id, e.expense_date, e.expense_category, e.original_amount, e.currency, e.exchange_rate,
-           e.base_amount, e.beneficiary, e.notes, e.status, e.updated_at,
-           a.name AS cash_account_name
+           e.base_amount, e.beneficiary, e.notes, e.status, e.approval_status, e.updated_at,
+           e.created_at, e.approved_at, a.name AS cash_account_name, u.full_name AS approved_by_name
     FROM expenses e
     LEFT JOIN cash_accounts a ON a.id = e.paid_from_cash_account_id
+    LEFT JOIN users u ON u.id = e.approved_by_user_id
     WHERE 1=1
   `;
   const params = [];
@@ -91,8 +104,8 @@ router.post('/', requirePermission(PERMISSIONS.EXPENSES_CREATE), (req, res) => {
       INSERT INTO expenses (
         expense_date, expense_category, description, currency,
         original_amount, exchange_rate, base_amount,
-        paid_from_cash_account_id, beneficiary, notes, created_by_user_id
-      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+        paid_from_cash_account_id, beneficiary, notes, created_by_user_id, approval_status
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       payload.expenseDate,
       payload.type,
@@ -103,7 +116,8 @@ router.post('/', requirePermission(PERMISSIONS.EXPENSES_CREATE), (req, res) => {
       cashAccount.id,
       payload.beneficiary,
       payload.notes,
-      req.user.id
+      req.user.id,
+      'DRAFT'
     );
 
     const expenseId = expResult.lastInsertRowid;
@@ -147,6 +161,12 @@ router.patch('/:id', requirePermission(PERMISSIONS.EXPENSES_EDIT), (req, res) =>
   if (existing.status === 'CANCELLED') {
     return res.status(400).json({ success: false, error: 'لا يمكن تعديل مصروف ملغى' });
   }
+  if (existing.approval_status === 'APPROVED' && !canOverrideApproved(req)) {
+    return res.status(400).json({ success: false, error: 'لا يمكن تعديل مصروف معتمد بدون صلاحية تجاوز' });
+  }
+  if (!canOverrideApproved(req) && isOutsideLockWindow(existing.created_at || existing.expense_date)) {
+    return res.status(400).json({ success: false, error: 'انتهت نافذة تعديل المصروف' });
+  }
 
   const payload = {
     expenseDate: req.body.expenseDate,
@@ -171,6 +191,10 @@ router.patch('/:id', requirePermission(PERMISSIONS.EXPENSES_EDIT), (req, res) =>
   const newBaseAmount = payload.amount * payload.exchangeRate;
 
   const trx = db.transaction(() => {
+    const before = db.prepare(`
+      SELECT expense_date, expense_category, currency, original_amount, exchange_rate, base_amount, beneficiary, notes, approval_status, status
+      FROM expenses WHERE id = ?
+    `).get(id);
     const oldMovement = db.prepare(`
       SELECT * FROM cash_movements
       WHERE source_type = 'EXPENSE' AND source_id = ?
@@ -233,7 +257,11 @@ router.patch('/:id', requirePermission(PERMISSIONS.EXPENSES_EDIT), (req, res) =>
       req.user.id
     );
 
-    writeAuditLog({ userId: req.user.id, entityName: 'expenses', entityId: id, action: 'UPDATE' });
+    const after = db.prepare(`
+      SELECT expense_date, expense_category, currency, original_amount, exchange_rate, base_amount, beneficiary, notes, approval_status, status
+      FROM expenses WHERE id = ?
+    `).get(id);
+    writeAuditLog({ userId: req.user.id, entityName: 'expenses', entityId: id, action: 'UPDATE', metadata: { before, after } });
   });
 
   try {
@@ -242,6 +270,122 @@ router.patch('/:id', requirePermission(PERMISSIONS.EXPENSES_EDIT), (req, res) =>
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message || 'فشل تعديل المصروف' });
   }
+});
+
+router.post('/:id/cancel', requirePermission(PERMISSIONS.EXPENSES_DELETE), (req, res) => {
+  const id = Number(req.params.id);
+  const reason = String(req.body.reason || '').trim();
+
+  if (!id) return res.status(400).json({ success: false, error: 'معرف المصروف غير صالح' });
+  if (!reason) return res.status(400).json({ success: false, error: 'سبب الإلغاء مطلوب' });
+
+  const existing = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ success: false, error: 'المصروف غير موجود' });
+  if (existing.status === 'CANCELLED') {
+    return res.status(400).json({ success: false, error: 'المصروف ملغى مسبقاً' });
+  }
+  if (existing.approval_status === 'APPROVED' && !canOverrideApproved(req)) {
+    return res.status(400).json({ success: false, error: 'لا يمكن إلغاء مصروف معتمد بدون صلاحية تجاوز' });
+  }
+  if (!canOverrideApproved(req) && isOutsideLockWindow(existing.created_at || existing.expense_date)) {
+    return res.status(400).json({ success: false, error: 'انتهت نافذة إلغاء المصروف' });
+  }
+
+  const trx = db.transaction(() => {
+    const movements = db.prepare(`
+      SELECT *
+      FROM cash_movements
+      WHERE source_type = 'EXPENSE' AND source_id = ?
+      ORDER BY id ASC
+    `).all(id);
+
+    for (const movement of movements) {
+      db.prepare(`
+        INSERT INTO cash_movements (
+          cash_account_id, movement_date, movement_type, direction,
+          currency, original_amount, exchange_rate, base_amount,
+          source_type, source_id, notes, created_by_user_id
+        ) VALUES (?, DATE('now'), ?, ?, ?, ?, ?, ?, 'EXPENSE', ?, ?, ?)
+      `).run(
+        movement.cash_account_id,
+        movement.direction === 'IN' ? 'REFUND_OUT' : 'REFUND_IN',
+        movement.direction === 'IN' ? 'OUT' : 'IN',
+        movement.currency,
+        movement.original_amount,
+        movement.exchange_rate,
+        movement.base_amount,
+        id,
+        `${reason} | عكس حركة مصروف ${id}`,
+        req.user.id
+      );
+    }
+
+    db.prepare(`
+      UPDATE expenses
+      SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+
+    writeAuditLog({ userId: req.user.id, entityName: 'expenses', entityId: id, action: 'CANCEL', reason });
+  });
+
+  try {
+    trx();
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message || 'فشل إلغاء المصروف' });
+  }
+});
+
+router.post('/:id/approve', requirePermission(PERMISSIONS.EXPENSES_APPROVE), (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'معرف المصروف غير صالح' });
+
+  const expense = db.prepare('SELECT id, status, approval_status FROM expenses WHERE id = ?').get(id);
+  if (!expense) return res.status(404).json({ success: false, error: 'المصروف غير موجود' });
+  if (expense.status === 'CANCELLED') {
+    return res.status(400).json({ success: false, error: 'لا يمكن اعتماد مصروف ملغى' });
+  }
+  if (expense.approval_status === 'APPROVED') {
+    return res.status(400).json({ success: false, error: 'المصروف معتمد مسبقاً' });
+  }
+
+  db.prepare(`
+    UPDATE expenses
+    SET approval_status = 'APPROVED', approved_at = CURRENT_TIMESTAMP, approved_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(req.user.id, id);
+
+  writeAuditLog({ userId: req.user.id, entityName: 'expenses', entityId: id, action: 'APPROVE' });
+  return res.json({ success: true });
+});
+
+router.post('/:id/unapprove', requirePermission(PERMISSIONS.EXPENSES_APPROVE), (req, res) => {
+  const id = Number(req.params.id);
+  const reason = String(req.body.reason || '').trim();
+  if (!id) return res.status(400).json({ success: false, error: 'معرف المصروف غير صالح' });
+  if (!reason) return res.status(400).json({ success: false, error: 'سبب إلغاء الاعتماد مطلوب' });
+  if (!canOverrideApproved(req)) {
+    return res.status(403).json({ success: false, error: 'لا توجد صلاحية لإلغاء اعتماد المصروف' });
+  }
+
+  const expense = db.prepare('SELECT id, status, approval_status FROM expenses WHERE id = ?').get(id);
+  if (!expense) return res.status(404).json({ success: false, error: 'المصروف غير موجود' });
+  if (expense.status === 'CANCELLED') {
+    return res.status(400).json({ success: false, error: 'لا يمكن إلغاء اعتماد مصروف ملغى' });
+  }
+  if (expense.approval_status !== 'APPROVED') {
+    return res.status(400).json({ success: false, error: 'المصروف ليس معتمداً' });
+  }
+
+  db.prepare(`
+    UPDATE expenses
+    SET approval_status = 'DRAFT', approved_at = NULL, approved_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id);
+
+  writeAuditLog({ userId: req.user.id, entityName: 'expenses', entityId: id, action: 'UNAPPROVE', reason });
+  return res.json({ success: true });
 });
 
 export default router;
